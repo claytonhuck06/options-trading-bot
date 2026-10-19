@@ -110,3 +110,26 @@ def test_contract_selection_band_and_expiry():
 def test_weeks_grouping():
     days = [date(2026, 10, 12), date(2026, 10, 13), date(2026, 10, 19), date(2026, 10, 20)]
     assert [len(w) for w in _weeks(days)] == [2, 2]
+
+
+def test_spending_summary_needs_no_key(monkeypatch):
+    monkeypatch.delenv("DATABENTO_API_KEY", raising=False)
+    g = GuardedDatabento(CFG, sqlite3.connect(":memory:"))          # no client, no key
+    assert g.summary().spent_usd == 0
+
+
+def test_missing_key_gives_plain_message_without_secret(monkeypatch):
+    from core.config import ConfigError
+    monkeypatch.delenv("DATABENTO_API_KEY", raising=False)
+    g = GuardedDatabento(CFG, sqlite3.connect(":memory:"))
+    with pytest.raises(ConfigError, match="source ~/.zshrc"):
+        g.get_range(**REQ)
+
+
+def test_bad_key_is_never_echoed(monkeypatch):
+    from core.config import ConfigError
+    monkeypatch.setenv("DATABENTO_API_KEY", "not-a-real-key-SECRET123")
+    g = GuardedDatabento(CFG, sqlite3.connect(":memory:"))
+    with pytest.raises(ConfigError) as exc:
+        g.quote(**REQ)
+    assert "SECRET123" not in str(exc.value)

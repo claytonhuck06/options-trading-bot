@@ -59,16 +59,31 @@ class GuardedDatabento:
         self.ledger = ledger
         self.ledger.executescript(LEDGER)
         self.ledger.commit()
-        if client is None:
+        self._client_obj = client             # created on first use, so local-only commands need no key
+
+    @property
+    def _client(self):
+        if self._client_obj is None:
+            import os
+
+            from core.config import ConfigError
+            if not os.environ.get("DATABENTO_API_KEY"):
+                raise ConfigError("DATABENTO_API_KEY is not set in this terminal. Run `source ~/.zshrc` "
+                                  "or open a new terminal window, then try again.")
             import databento as db
-            client = db.Historical()          # reads DATABENTO_API_KEY from the environment
-        self._client = client
+            try:
+                self._client_obj = db.Historical()          # reads DATABENTO_API_KEY from the environment
+            except ValueError:
+                # Databento's own message includes the key itself; never let that reach the screen or logs.
+                raise ConfigError("Databento rejected the API key format. Re-run scripts/set_databento_key.sh.") from None
+        return self._client_obj
 
     # --- free calls -------------------------------------------------------------
     def quote(self, **request) -> tuple[float, int]:
         """(USD, bytes) Databento would charge for this request. Free."""
-        return (float(self._client.metadata.get_cost(**request)),
-                int(self._client.metadata.get_billable_size(**request)))
+        with _plain_errors():
+            return (float(self._client.metadata.get_cost(**request)),
+                    int(self._client.metadata.get_billable_size(**request)))
 
     def summary(self) -> SpendSummary:
         spent, n = self.ledger.execute(
@@ -91,7 +106,8 @@ class GuardedDatabento:
             (datetime.now(timezone.utc).isoformat(), dataset, schema, start, end, len(symbols), cost, size, "downloading"))
         self.ledger.commit()
         try:
-            data = self._client.timeseries.get_range(**request)
+            with _plain_errors():
+                data = self._client.timeseries.get_range(**request)
         except Exception as exc:
             # Databento may still bill a request that failed mid-way; keep it counted against the budget.
             self.ledger.execute("UPDATE databento_spend SET status='failed', note=? WHERE id=?", (str(exc)[:500], cur.lastrowid))
@@ -102,6 +118,28 @@ class GuardedDatabento:
         log.info("databento %s %s..%s %d symbols: $%.4f (total $%.2f of $%.2f)", schema, start, end, len(symbols), cost,
                  s.spent_usd + cost, s.budget_usd)
         return data
+
+
+class _plain_errors:
+    """Turn authentication failures into a plain instruction, and make sure no error text carries the key."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc is None:
+            return False
+        import os
+
+        from core.config import ConfigError
+        key = os.environ.get("DATABENTO_API_KEY") or ""
+        text = str(exc).replace(key, "<hidden>") if key else str(exc)
+        if "401" in text or "auth" in text.lower():
+            raise ConfigError("Databento rejected the API key. Check it in the Databento portal and re-run "
+                              "scripts/set_databento_key.sh.") from None
+        if key and key in str(exc):
+            raise RuntimeError(text) from None
+        return False
 
 
 def open_ledger(path: Path) -> sqlite3.Connection:
