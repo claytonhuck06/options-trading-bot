@@ -146,6 +146,30 @@ CREATE TABLE IF NOT EXISTS pricing_residuals (
     PRIMARY KEY (run_id, symbol)
 );
 
+CREATE TABLE IF NOT EXISTS candidate_trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES pricing_runs(id),
+    as_of TEXT NOT NULL,
+    structure TEXT NOT NULL,          -- debit | credit
+    direction TEXT NOT NULL,          -- bullish | bearish
+    option_type TEXT NOT NULL,
+    expiration TEXT NOT NULL,
+    anchor_symbol TEXT NOT NULL,
+    long_symbol TEXT NOT NULL, long_price REAL NOT NULL,
+    short_symbol TEXT NOT NULL, short_price REAL NOT NULL,
+    width REAL NOT NULL,
+    contracts INTEGER NOT NULL,
+    max_loss REAL, max_profit REAL, fees REAL,       -- $ per spread
+    entry_edge REAL, edge_z REAL, expected_pnl REAL, pnl_std REAL,
+    profit_target REAL, target_probability REAL, loss_probability REAL,
+    score REAL,
+    net_delta REAL, net_gamma REAL, net_vega REAL, net_theta REAL,
+    eligible INTEGER NOT NULL,
+    reasons TEXT NOT NULL,            -- JSON list; empty when eligible
+    explanation TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_ct_run ON candidate_trades(run_id);
+
 CREATE TABLE IF NOT EXISTS system_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,

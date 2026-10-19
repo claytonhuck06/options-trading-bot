@@ -126,6 +126,30 @@ class PricingSettings(_Strict):
         return self
 
 
+class StrategySettings(_Strict):
+    min_signal_z: float = Field(gt=0)
+    spread_widths: list[float] = Field(min_length=1)
+    min_edge_z: float = Field(gt=0)
+    fee_per_contract: float = Field(ge=0)
+    assumed_convergence: float = Field(gt=0, le=1)
+    holding_period_minutes: int = Field(ge=1, le=390)
+    vol_change_std_per_hour: float = Field(ge=0, le=0.1)
+    max_quote_age_seconds: float = Field(gt=0)
+    min_quote_size: float = Field(ge=0)
+    max_leg_relative_spread: float = Field(gt=0, le=2)
+    min_max_profit: float = Field(ge=0)
+    min_risk_fraction_of_width: float = Field(ge=0, lt=1)
+    min_target_probability: float = Field(ge=0, lt=1)
+    max_candidates_per_scan: int = Field(ge=1, le=1000)
+
+    @field_validator("spread_widths")
+    @classmethod
+    def _widths(cls, v: list[float]) -> list[float]:
+        if any(w <= 0 for w in v):
+            raise ValueError("spread_widths must be positive")
+        return sorted(set(v))
+
+
 class DataQualitySettings(_Strict):
     max_quote_age_seconds: float = Field(gt=0)
     max_clock_skew_seconds: float = Field(ge=0)
@@ -216,6 +240,7 @@ class Settings(_Strict):
     market_data: MarketDataSettings
     data_quality: DataQualitySettings
     pricing: PricingSettings
+    strategy: StrategySettings
     schedule: ScheduleSettings
     storage: StorageSettings
     logging: LoggingSettings

@@ -44,3 +44,20 @@ def save_pricing(store: MarketDataStore, result: PricingResult, notes: str | Non
     )
     store.conn.commit()
     return run_id
+
+
+def save_candidates(store: MarketDataStore, run_id: int, candidates) -> int:
+    rows = []
+    for c in candidates:
+        s = c.spread
+        rows.append((
+            run_id, _iso(c.as_of), s.structure, s.direction, s.option_type, _iso(s.expiration), s.anchor,
+            s.long.symbol, s.long.price, s.short.symbol, s.short.price, s.width, c.contracts,
+            c.max_loss_per_spread, c.max_profit_per_spread, c.fees_per_spread, c.entry_edge, c.edge_z,
+            c.expected_pnl, c.pnl_std, c.profit_target, c.target_probability, c.loss_probability, c.score,
+            c.net_delta, c.net_gamma, c.net_vega, c.net_theta, int(c.eligible), json.dumps(c.reasons), c.explain(),
+        ))
+    store.conn.executemany(
+        f"INSERT INTO candidate_trades VALUES (NULL,{','.join('?' * 31)})", rows)
+    store.conn.commit()
+    return len(rows)

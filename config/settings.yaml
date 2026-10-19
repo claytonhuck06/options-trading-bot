@@ -50,6 +50,23 @@ pricing:
   parity_check_moneyness: 0.03        # parity checked only within ±3% of the forward (early exercise distorts it further out)
   model_vol_uncertainty_floor: 0.0025 # 0.25 vol points of model error added to every fair value
 
+strategy:
+  # Relative-value spreads. Every value here is a starting HYPOTHESIS, not a validated parameter.
+  min_signal_z: 2.0                   # a leg must look mispriced by this many std-devs to anchor a trade
+  spread_widths: [1, 2, 5, 10]        # $ strike distance to the protecting leg
+  min_edge_z: 2.0                     # whole-spread edge must exceed this many std-devs of model uncertainty
+  fee_per_contract: 0.05              # $ per contract per side; allowance for regulatory/clearing fees
+  assumed_convergence: 0.5            # share of the entry edge assumed captured before exit (untested)
+  holding_period_minutes: 90
+  vol_change_std_per_hour: 0.0035     # ~0.35 vol pts/hour, from the 2026-10-19 stability table
+  max_quote_age_seconds: 30           # leg quotes older than this at scan time are not tradable
+  min_quote_size: 5                   # contracts shown on the side we would trade
+  max_leg_relative_spread: 0.10       # (ask-bid)/mid per leg
+  min_max_profit: 5.00                # $ per contract; smaller rewards are not worth the execution risk
+  min_risk_fraction_of_width: 0.05    # max loss below 5% of the strike width = quote glitch, not an opportunity
+  min_target_probability: 0.25        # chance of reaching the profit target within the holding period
+  max_candidates_per_scan: 20
+
 schedule:                             # Eastern time, HH:MM
   scan_start: "09:35"
   no_new_positions_after: "15:00"

@@ -4,7 +4,7 @@ Local-first quantitative options trading research platform (SPY first), built
 phase by phase per the master plan. See [docs/MILESTONES.md](docs/MILESTONES.md)
 for status.
 
-**Current state: Phase 3 pricing engine (research only). The system cannot place, change or cancel
+**Current state: Phase 4 scanner and spread builder (research only). The system cannot place, change or cancel
 orders — that code does not exist yet.**
 
 ## Setup
@@ -27,6 +27,8 @@ file (see `.env.example`). Keys are never printed or logged.
 .venv/bin/python main.py collect --env paper --once # one cycle, for a quick test
 .venv/bin/python main.py price --env paper          # price the latest snapshot
 .venv/bin/python main.py report --env paper         # residual research report for the latest day
+.venv/bin/python main.py scan --env paper           # candidate spreads right now, with reasons (no orders)
+.venv/bin/python main.py scan-report --env paper    # replay the scanner over the latest day
 .venv/bin/python -m pytest                 # test suite
 ```
 
@@ -56,8 +58,8 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.optionsquant.collect
 | `risk/limits.py` | percentage limits → today's dollar limits | 1 |
 | `data/` | collector, quote validators, SQLite storage (`data/storage/options_quant.db`) | 2 |
 | `pricing/` | Black-Scholes, Greeks, implied vol, American tree, rates, smile fits, pricing engine | 3 |
-| `research/` | pricing-residual report | 3 |
-| `strategies/` | relative-value scanner, spread builder | 4 |
+| `research/` | pricing-residual and scanner-replay reports | 3, 4 |
+| `strategies/` | vertical spread builder, scoring and rejection rules | 4 |
 | `risk/` | sizing, portfolio risk, hedging, kill switch | 5 |
 | `execution/` | orders, reconciliation | 6 |
 | `backtesting/`, `research/` | event-driven backtests, pattern discovery | 7, 10 |

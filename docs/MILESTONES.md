@@ -71,7 +71,24 @@ does not systematically invent opportunities from bad quotes.
 - [ ] Check smile stability across several full sessions
 - [ ] Trading-time (not calendar-time) clock for short expiries
 
-## Phase 4 — Opportunity scanner and spread builder
+## Phase 4 — Opportunity scanner and spread builder 🟡 (built 2026-10-19; needs full days of data)
+Requirement: explainable trade candidates; rejects opportunities that can't realistically be executed profitably.
+- [x] Candidates anchored on mispriced contracts (z ≥ 2), paired with clean neighbouring strikes
+- [x] Defined-risk vertical spreads only (debit and credit); no uncovered short leg is possible
+- [x] Max loss / max profit computed from executable prices plus round-trip fees, before scoring
+- [x] Score = expected P&L after convergence haircut, exit spreads and fees ÷ max loss
+- [x] Probability of reaching the 20% profit target in the holding period (delta + vega risk)
+- [x] Net Greeks per spread; per-trade sizing against the $100 risk budget
+- [x] 13 rejection rules, each with a plain-English reason; plain-English explanation per candidate
+- [x] Candidates stored in `candidate_trades`; `main.py scan` and `main.py scan-report`
+- [x] Replay of 2026-10-19 afternoon: 444 spreads built, 0 eligible; every rejected group lost money later
+- [x] 164 automated tests
+- [ ] Re-run scan-report over several full days; measure `assumed_convergence` instead of assuming it
+- [ ] Correlation with open positions (needs the risk engine, Phase 5)
+
+Note on older data: Alpaca's free history has option trades and 1-minute bars back to Feb 2024, but no historical
+bid/ask quotes. The scanner needs bid/ask, so its history comes only from our own collector (or a paid vendor later).
+
 ## Phase 5 — Risk engine, exits, kill switch
 ## Phase 6 — Paper execution and reconciliation
 ## Phase 7 — Backtesting (requires suitable historical quote data)

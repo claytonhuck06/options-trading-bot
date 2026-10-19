@@ -9,6 +9,9 @@ Commands:
         --wait-for-open     If started before the open, wait for it (used by the daily schedule).
     python main.py price    Price the latest stored snapshot (or --as-of TIME) and save the results.
     python main.py report   Research report on pricing residuals for --date (default: latest day).
+    python main.py scan     Price the latest snapshot and list candidate spreads with reasons. No orders.
+        --any-time          Ignore the entry-time window (for research outside 9:35-15:00 ET).
+    python main.py scan-report  Replay the scanner over --date and check candidates' later value.
 
 Phase 1 cannot submit orders: there is no order-submission code in the project.
 """
@@ -109,6 +112,100 @@ def cmd_collect(settings, log, once: bool, cycles: int | None, wait: bool = Fals
     return 0
 
 
+def _price_latest(settings, log, store, as_of_text: str | None):
+    from datetime import datetime
+
+    from pricing.engine import price_snapshot
+    from pricing.persistence import save_pricing
+    from pricing.rates import risk_free_rate, update_rates
+    from pricing.snapshot import latest_receipt_time, load_snapshot
+
+    try:
+        update_rates(settings, store)
+    except Exception as exc:  # offline is fine: stored or fallback rates are used
+        log.warning("could not refresh rates from FRED: %s", exc)
+    underlying = settings.market_data.primary_underlying
+    if as_of_text:
+        as_of = datetime.fromisoformat(as_of_text)
+        if as_of.tzinfo is None:
+            raise ConfigError("--as-of needs a timezone, e.g. 2026-10-19T15:00:00-04:00")
+    else:
+        as_of = latest_receipt_time(store, underlying)
+        if as_of is None:
+            return None, None
+    snap = load_snapshot(store, underlying, as_of, settings.pricing.snapshot_max_quote_age_seconds)
+
+    def rate_for(years):
+        info = risk_free_rate(settings, store, as_of, years)
+        return info.rate, info.source
+
+    result = price_snapshot(snap, settings.pricing, rate_for)
+    return result, save_pricing(store, result)
+
+
+def cmd_scan(settings, log, as_of_text: str | None, any_time: bool) -> int:
+    from collections import Counter
+
+    from core.config import PROJECT_ROOT
+    from data.storage.db import MarketDataStore
+    from pricing.persistence import save_candidates
+    from risk.limits import compute_daily_budget
+    from strategies.relative_value import scan
+
+    store = MarketDataStore(PROJECT_ROOT / settings.storage.sqlite_path)
+    try:
+        result, run_id = _price_latest(settings, log, store, as_of_text)
+        if result is None:
+            print("No collected data yet — run `main.py collect` first.")
+            return 1
+        # Phase 4 sizes against the configured reference equity; live account equity arrives with the risk engine.
+        budget = compute_daily_budget(settings.risk, settings.risk.reference_equity)
+        cands = scan(result, settings, budget, enforce_window=not any_time)
+        save_candidates(store, run_id, cands)
+    finally:
+        store.close()
+
+    eligible = [c for c in cands if c.eligible]
+    print(f"Scan of pricing run {run_id} ({result.snapshot.as_of.isoformat()}): {len(cands)} candidate spreads, "
+          f"{len(eligible)} eligible. Max risk per trade ${budget.max_risk_per_trade:.0f}. NO ORDERS ARE PLACED.")
+    reasons = Counter(r for c in cands for r in c.reasons)
+    if reasons:
+        print("Rejections: " + ", ".join(f"{r} {n}" for r, n in reasons.most_common()))
+    shown = eligible[: settings.strategy.max_candidates_per_scan] or cands[:3]
+    if not eligible and cands:
+        print("\nNo eligible trades. Closest rejected candidates:")
+    for c in shown:
+        print()
+        print(c.explain())
+    return 0
+
+
+def cmd_scan_report(settings, log, day_text: str | None, every: int) -> int:
+    from datetime import date
+
+    from core.config import PROJECT_ROOT
+    from data.storage.db import MarketDataStore
+    from pricing.snapshot import latest_receipt_time
+    from research.pricing_report import EASTERN
+    from research.scan_report import build_scan_report
+
+    store = MarketDataStore(PROJECT_ROOT / settings.storage.sqlite_path)
+    try:
+        if day_text:
+            day = date.fromisoformat(day_text)
+        else:
+            latest = latest_receipt_time(store, settings.market_data.primary_underlying)
+            if latest is None:
+                print("No collected data yet.")
+                return 1
+            day = latest.astimezone(EASTERN).date()
+        path = build_scan_report(settings, store, day, every)
+    finally:
+        store.close()
+    print(f"Report written: {path.relative_to(PROJECT_ROOT)}")
+    return 0
+
+
 def cmd_price(settings, log, as_of_text: str | None) -> int:
     from datetime import datetime, timezone
 
@@ -204,12 +301,13 @@ def cmd_report(settings, log, day_text: str | None, every: int) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="options-quant")
-    parser.add_argument("command", choices=["config", "check", "collect", "price", "report"], nargs="?", default="config")
+    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report"], nargs="?", default="config")
     parser.add_argument("--env", help="development | backtest | observation | paper | live")
     parser.add_argument("--once", action="store_true", help="collect: run a single cycle")
     parser.add_argument("--cycles", type=int, help="collect: stop after N cycles")
+    parser.add_argument("--any-time", action="store_true", help="scan: ignore the entry-time window")
     parser.add_argument("--date", help="report: trading day YYYY-MM-DD")
-    parser.add_argument("--every", type=int, default=5, help="report: minutes between snapshots")
+    parser.add_argument("--every", type=int, help="report / scan-report: minutes between snapshots (default 5 / 1)")
     parser.add_argument("--as-of", help="price: snapshot time, ISO with timezone")
     parser.add_argument("--wait-for-open", action="store_true", help="collect: wait for the market to open")
     args = parser.parse_args(argv)
@@ -225,8 +323,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "config":
             return cmd_config(settings)
+        if args.command == "scan-report":
+            return cmd_scan_report(settings, get_logger("main"), args.date, args.every or 1)
+        if args.command == "scan":
+            return cmd_scan(settings, get_logger("main"), args.as_of, args.any_time)
         if args.command == "report":
-            return cmd_report(settings, get_logger("main"), args.date, args.every)
+            return cmd_report(settings, get_logger("main"), args.date, args.every or 5)
         if args.command == "price":
             return cmd_price(settings, get_logger("main"), args.as_of)
         if args.command == "collect":
