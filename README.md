@@ -4,7 +4,7 @@ Local-first quantitative options trading research platform (SPY first), built
 phase by phase per the master plan. See [docs/MILESTONES.md](docs/MILESTONES.md)
 for status.
 
-**Current state: Phase 2 market-data collector (read-only). The system cannot place, change or cancel
+**Current state: Phase 3 pricing engine (research only). The system cannot place, change or cancel
 orders — that code does not exist yet.**
 
 ## Setup
@@ -25,6 +25,8 @@ file (see `.env.example`). Keys are never printed or logged.
 .venv/bin/python main.py check --env paper # + read-only Alpaca connection check
 .venv/bin/python main.py collect --env paper       # collect SPY options all session
 .venv/bin/python main.py collect --env paper --once # one cycle, for a quick test
+.venv/bin/python main.py price --env paper          # price the latest snapshot
+.venv/bin/python main.py report --env paper         # residual research report for the latest day
 .venv/bin/python -m pytest                 # test suite
 ```
 
@@ -53,7 +55,8 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.optionsquant.collect
 | `execution/broker.py` | read-only Alpaca access (no order methods) | 1 |
 | `risk/limits.py` | percentage limits → today's dollar limits | 1 |
 | `data/` | collector, quote validators, SQLite storage (`data/storage/options_quant.db`) | 2 |
-| `pricing/` | Black-Scholes, implied vol, surface, Greeks | 3 |
+| `pricing/` | Black-Scholes, Greeks, implied vol, American tree, rates, smile fits, pricing engine | 3 |
+| `research/` | pricing-residual report | 3 |
 | `strategies/` | relative-value scanner, spread builder | 4 |
 | `risk/` | sizing, portfolio risk, hedging, kill switch | 5 |
 | `execution/` | orders, reconciliation | 6 |

@@ -35,6 +35,21 @@ data_quality:
   max_relative_spread: 0.25           # (ask-bid)/mid above this = too wide...
   min_absolute_spread_for_wide: 0.05  # ...but only if the spread is also at least this many dollars
 
+pricing:
+  rate_series: [DGS1MO, DGS3MO]       # free daily US Treasury yields from FRED
+  fallback_risk_free_rate: 0.04       # used only if no stored rate (logged as a warning)
+  max_rate_age_days: 7
+  snapshot_max_quote_age_seconds: 60  # quotes older than this at snapshot time are ignored
+  forward_pairs: 6                    # call/put pairs nearest the money used for the implied forward
+  surface_poly_degree: 3              # smile = polynomial in log-moneyness, per expiry
+  min_points_per_expiry: 8
+  outlier_mad_threshold: 4.0          # drop fit points this many robust std-devs from the smile
+  american_crr_steps: 200
+  early_exercise_flag_threshold: 0.02 # $/share; above this, Black-Scholes is flagged unreliable
+  min_option_price: 0.10              # below this, tick size dominates the implied vol: not trusted
+  parity_check_moneyness: 0.03        # parity checked only within ±3% of the forward (early exercise distorts it further out)
+  model_vol_uncertainty_floor: 0.0025 # 0.25 vol points of model error added to every fair value
+
 schedule:                             # Eastern time, HH:MM
   scan_start: "09:35"
   no_new_positions_after: "15:00"

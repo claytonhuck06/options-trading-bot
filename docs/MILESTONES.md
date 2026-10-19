@@ -50,9 +50,26 @@ Findings:
 - Near-the-money spreads average ~$0.12 (~1.5%); far strikes ~12%.
 - Interest rates / dividend assumptions are deferred to Phase 3, where they are used.
 
-## Phase 3 — Pricing engine
-- [ ] Black-Scholes, implied volatility, Greeks (with tests vs known values)
-- [ ] Volatility surface, residuals, model uncertainty
+## Phase 3 — Pricing engine 🟡 (built 2026-10-19; stability needs more days of data)
+Requirement: pricing passes numerical tests, volatility estimates are stable, the model
+does not systematically invent opportunities from bad quotes.
+- [x] Black-Scholes-Merton prices and analytic Greeks (Hull textbook values, finite-difference checks)
+- [x] Implied volatility solver that refuses impossible prices instead of guessing
+- [x] Binomial American pricer; early-exercise premium measured and flagged
+- [x] Risk-free rates from FRED (free), previous-day only (no look-ahead), fallback if offline
+- [x] Forward and dividend yield implied from put-call parity per expiry
+- [x] No-arbitrage quote filters: monotonic, vertical, butterfly, parity
+- [x] Per-expiry smile fit (weighted, outlier-robust) with leave-one-out fair values
+- [x] Model uncertainty per contract (smile error + model floor + forward noise)
+- [x] Edges measured against executable bid/ask, not mid
+- [x] Point-in-time snapshots that cannot see future data (tested)
+- [x] Results stored: pricing_runs, volatility_surface_fits, pricing_residuals
+- [x] Research report: `main.py report` → docs/research/
+- [x] Stability through the day and cross-expiry (calendar) consistency in the report
+- [x] 140 automated tests
+- [x] First report: docs/research/pricing_report_2026-10-19.md (afternoon only: 15:27–16:00 ET)
+- [ ] Check smile stability across several full sessions
+- [ ] Trading-time (not calendar-time) clock for short expiries
 
 ## Phase 4 — Opportunity scanner and spread builder
 ## Phase 5 — Risk engine, exits, kill switch

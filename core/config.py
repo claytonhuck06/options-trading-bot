@@ -104,6 +104,28 @@ class MarketDataSettings(_Strict):
         return self
 
 
+class PricingSettings(_Strict):
+    rate_series: list[str]
+    fallback_risk_free_rate: float = Field(ge=-0.05, le=0.25)
+    max_rate_age_days: int = Field(ge=1)
+    snapshot_max_quote_age_seconds: float = Field(gt=0)
+    forward_pairs: int = Field(ge=1, le=50)
+    surface_poly_degree: int = Field(ge=1, le=6)
+    min_points_per_expiry: int = Field(ge=3)
+    outlier_mad_threshold: float = Field(gt=1)
+    american_crr_steps: int = Field(ge=20, le=5000)
+    early_exercise_flag_threshold: float = Field(ge=0)
+    min_option_price: float = Field(ge=0)
+    parity_check_moneyness: float = Field(gt=0, le=1)
+    model_vol_uncertainty_floor: float = Field(ge=0, le=0.05)
+
+    @model_validator(mode="after")
+    def _enough_points(self) -> "PricingSettings":
+        if self.min_points_per_expiry < self.surface_poly_degree + 3:
+            raise ValueError("min_points_per_expiry must be at least surface_poly_degree + 3")
+        return self
+
+
 class DataQualitySettings(_Strict):
     max_quote_age_seconds: float = Field(gt=0)
     max_clock_skew_seconds: float = Field(ge=0)
@@ -193,6 +215,7 @@ class Settings(_Strict):
     broker: BrokerSettings
     market_data: MarketDataSettings
     data_quality: DataQualitySettings
+    pricing: PricingSettings
     schedule: ScheduleSettings
     storage: StorageSettings
     logging: LoggingSettings

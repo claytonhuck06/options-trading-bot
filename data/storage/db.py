@@ -84,10 +84,67 @@ CREATE TABLE IF NOT EXISTS option_quotes (
     delta REAL, gamma REAL, theta REAL, vega REAL, rho REAL,
     quality_flags TEXT NOT NULL,
     is_usable INTEGER NOT NULL,
+    last_seen_at TEXT,                -- latest cycle in which this same quote was still current
     UNIQUE(symbol, feed, quote_ts)
 );
 CREATE INDEX IF NOT EXISTS ix_oq_symbol_time ON option_quotes(symbol, received_at);
 CREATE INDEX IF NOT EXISTS ix_oq_cycle ON option_quotes(cycle_id);
+
+CREATE TABLE IF NOT EXISTS interest_rates (
+    series TEXT NOT NULL,             -- e.g. DGS1MO
+    observation_date TEXT NOT NULL,   -- the date the yield applies to
+    value_pct REAL NOT NULL,          -- as published (percent, bond-equivalent)
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (series, observation_date)
+);
+
+CREATE TABLE IF NOT EXISTS pricing_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    as_of TEXT NOT NULL,              -- snapshot time: only data received at or before this was used
+    underlying TEXT NOT NULL,
+    spot REAL,
+    risk_free_rate REAL,
+    rate_source TEXT,
+    contracts_in_snapshot INTEGER,
+    contracts_priced INTEGER,
+    created_at TEXT NOT NULL,
+    notes TEXT
+);
+
+CREATE TABLE IF NOT EXISTS volatility_surface_fits (
+    run_id INTEGER NOT NULL REFERENCES pricing_runs(id),
+    expiration TEXT NOT NULL,
+    years_to_expiry REAL NOT NULL,
+    forward REAL,
+    implied_dividend_yield REAL,
+    degree INTEGER,
+    coefficients TEXT,                -- JSON, IV = sum c_i * k^i, k = ln(K/F)
+    points_used INTEGER,
+    points_excluded INTEGER,
+    rmse_iv REAL,                     -- weighted fit error, in vol units (0.01 = 1 vol point)
+    atm_iv REAL,
+    status TEXT NOT NULL,             -- ok | too_few_points | no_forward
+    PRIMARY KEY (run_id, expiration)
+);
+
+CREATE TABLE IF NOT EXISTS pricing_residuals (
+    run_id INTEGER NOT NULL REFERENCES pricing_runs(id),
+    symbol TEXT NOT NULL,
+    option_type TEXT, strike REAL, expiration TEXT, years_to_expiry REAL,
+    log_moneyness REAL,
+    bid REAL, ask REAL, mid REAL,
+    iv_bid REAL, iv_mid REAL, iv_ask REAL,
+    fair_iv REAL, fair_price REAL,
+    buy_edge REAL,                    -- fair_price - ask  (>0: buying at the ask looks cheap)
+    sell_edge REAL,                   -- bid - fair_price  (>0: selling at the bid looks rich)
+    price_uncertainty REAL,           -- model uncertainty in $/share
+    buy_z REAL, sell_z REAL,          -- edge divided by uncertainty
+    delta REAL, gamma REAL, theta REAL, vega REAL, rho REAL,
+    early_exercise_premium REAL,
+    in_fit INTEGER NOT NULL,
+    flags TEXT NOT NULL,              -- JSON list of reasons this contract is unreliable
+    PRIMARY KEY (run_id, symbol)
+);
 
 CREATE TABLE IF NOT EXISTS system_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -121,6 +178,10 @@ class MarketDataStore:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.executescript(SCHEMA)
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(option_quotes)")}
+        if "last_seen_at" not in cols:                       # upgrade databases created before this column
+            self.conn.execute("ALTER TABLE option_quotes ADD COLUMN last_seen_at TEXT")
+            self.conn.execute("UPDATE option_quotes SET last_seen_at=received_at")
         if self.conn.execute("SELECT COUNT(*) FROM schema_info").fetchone()[0] == 0:
             self.conn.execute("INSERT INTO schema_info VALUES (?)", (SCHEMA_VERSION,))
         self.conn.commit()
@@ -196,5 +257,30 @@ class MarketDataStore:
                delta, gamma, theta, vega, rho, quality_flags, is_usable) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             rows,
         )
+        new = self.conn.total_changes - before
+        # Record that every quote in this cycle (new or repeated) was current at receipt.
+        self.conn.executemany(
+            "UPDATE option_quotes SET last_seen_at=? WHERE symbol=? AND feed=? AND quote_ts IS ?",
+            [(_iso(q.received_at), q.symbol, q.feed, _iso(q.quote_ts)) for q, _ in items],
+        )
         self.conn.commit()
-        return self.conn.total_changes - before
+        return new
+
+    # --- rates ------------------------------------------------------------
+    def upsert_rates(self, series: str, observations: list[tuple[date, float]]) -> int:
+        now = _iso(utcnow())
+        self.conn.executemany(
+            "INSERT OR REPLACE INTO interest_rates VALUES (?,?,?,?)",
+            [(series, _iso(d), v, now) for d, v in observations],
+        )
+        self.conn.commit()
+        return len(observations)
+
+    def latest_rate_before(self, series: str, before: date) -> tuple[date, float] | None:
+        """Latest observation dated strictly before `before` (a day's yield is only
+        published after that day ends, so using it the same day would be look-ahead)."""
+        row = self.conn.execute(
+            "SELECT observation_date, value_pct FROM interest_rates WHERE series=? AND observation_date<? ORDER BY observation_date DESC LIMIT 1",
+            (series, _iso(before)),
+        ).fetchone()
+        return (date.fromisoformat(row[0]), row[1]) if row else None
