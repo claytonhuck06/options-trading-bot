@@ -4,7 +4,7 @@ Local-first quantitative options trading research platform (SPY first), built
 phase by phase per the master plan. See [docs/MILESTONES.md](docs/MILESTONES.md)
 for status.
 
-**Current state: Phase 4 scanner and spread builder (research only). The system cannot place, change or cancel
+**Current state: Phase 5 risk engine (research only; still no order code). The system cannot place, change or cancel
 orders — that code does not exist yet.**
 
 ## Setup
@@ -29,6 +29,9 @@ file (see `.env.example`). Keys are never printed or logged.
 .venv/bin/python main.py report --env paper         # residual research report for the latest day
 .venv/bin/python main.py scan --env paper           # candidate spreads right now, with reasons (no orders)
 .venv/bin/python main.py scan-report --env paper    # replay the scanner over the latest day
+.venv/bin/python main.py history --env paper        # download SPY minute bars since 2016 (free)
+.venv/bin/python main.py risk-replay --env paper    # stress calibration + 10-year risk-control replay
+.venv/bin/python main.py killswitch --env paper     # status | stop | ack-warning | reset --authorization "..."
 .venv/bin/python -m pytest                 # test suite
 ```
 
@@ -60,7 +63,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.optionsquant.collect
 | `pricing/` | Black-Scholes, Greeks, implied vol, American tree, rates, smile fits, pricing engine | 3 |
 | `research/` | pricing-residual and scanner-replay reports | 3, 4 |
 | `strategies/` | vertical spread builder, scoring and rejection rules | 4 |
-| `risk/` | sizing, portfolio risk, hedging, kill switch | 5 |
+| `risk/` | sizing, positions, risk engine, exits, hedging, kill switch, history-calibrated stress | 5 |
 | `execution/` | orders, reconciliation | 6 |
 | `backtesting/`, `research/` | event-driven backtests, pattern discovery | 7, 10 |
 | `agents/` | Qwen analyst (read-only, advisory) | 9 |

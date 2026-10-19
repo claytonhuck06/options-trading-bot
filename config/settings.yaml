@@ -75,6 +75,7 @@ schedule:                             # Eastern time, HH:MM
 
 storage:
   sqlite_path: data/storage/options_quant.db
+  history_path: data/storage/history.db       # historical SPY minute bars (risk calibration / replay)
 
 logging:
   level: INFO

@@ -89,7 +89,31 @@ Requirement: explainable trade candidates; rejects opportunities that can't real
 Note on older data: Alpaca's free history has option trades and 1-minute bars back to Feb 2024, but no historical
 bid/ask quotes. The scanner needs bid/ask, so its history comes only from our own collector (or a paid vendor later).
 
-## Phase 5 — Risk engine, exits, kill switch
+## Phase 5 — Risk engine, exits, kill switch 🟡 (built 2026-10-19; replayed on 10 years of history)
+Requirement: tests show the system cannot exceed configured limits and responds correctly to simulated failures.
+- [x] All limits in config/risk_limits.yaml (exits, exposure, hedging, kill switch, approval expiry)
+- [x] Start-of-day equity snapshot, high-water mark (adjusted for deposits/withdrawals)
+- [x] Percentage sizing against per-trade and remaining aggregate budgets; never rounds up
+- [x] Risk engine: one decision per request id, approvals expire after 30 s, shrinks or refuses
+- [x] Checks: kill switch, entry window, stale data, concurrency, uncovered shorts, daily loss/profit,
+      per-trade and aggregate budgets, beta-weighted delta, vega, historical stress loss vs today's allowance
+- [x] Exit plan before entry: emergency, market close, stop loss, profit target, mispricing gone, time
+- [x] Hedge evaluation: cheapest of SPY-share hedge / partial reduce / close; never raises limits
+- [x] Kill switch with 4 levels; HALTED needs an exact authorization phrase to reset
+- [x] Drawdown warning pauses entries until a person OKs each day (`main.py killswitch ack-warning`)
+- [x] Partial fill leaving a naked short is detected and halts the system
+- [x] Historical SPY minute bars 2016–2026 (free SIP feed), `main.py history`
+- [x] Stress scenarios calibrated on 2,714 days (worst 2-hour drop −5.8%, 2025-04-07)
+- [x] 10-year replay (`main.py risk-replay`): 10,559 trades, none lost more than planned,
+      worst day −$94, daily loss limit never reached, engine stood aside on crash days
+- [x] 201 automated tests passing (6 skipped edge cases)
+- [ ] Replace modelled option prices with real quotes in the replay once a quote history exists
+
+Findings:
+- With no edge, ~1,000 trades a year lose ~$6,000 (bid-ask and fees). Frequency does not create profit.
+- With 3 positions × ~$100 risk and 50% stops, normal days lose far less than the $300 daily limit;
+  that limit is a backstop for gaps and failures.
+
 ## Phase 6 — Paper execution and reconciliation
 ## Phase 7 — Backtesting (requires suitable historical quote data)
 ## Phase 8 — Observation mode, then 60–90+ days of paper trading

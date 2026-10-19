@@ -12,6 +12,10 @@ Commands:
     python main.py scan     Price the latest snapshot and list candidate spreads with reasons. No orders.
         --any-time          Ignore the entry-time window (for research outside 9:35-15:00 ET).
     python main.py scan-report  Replay the scanner over --date and check candidates' later value.
+    python main.py history  Download historical SPY one-minute bars (free, back to 2016).
+    python main.py risk-replay  Recalibrate stress scenarios and replay the risk controls over history.
+    python main.py killswitch status|stop|ack-warning|reset   Inspect or operate the kill switch.
+        reset needs --authorization "<exact phrase>"; ack-warning OKs trading today during a drawdown warning.
 
 Phase 1 cannot submit orders: there is no order-submission code in the project.
 """
@@ -206,6 +210,75 @@ def cmd_scan_report(settings, log, day_text: str | None, every: int) -> int:
     return 0
 
 
+def cmd_killswitch(settings, action: str, authorization: str | None) -> int:
+    from datetime import datetime
+
+    from core.config import PROJECT_ROOT
+    from data.storage.db import MarketDataStore
+    from research.pricing_report import EASTERN
+    from risk.state import RESET_PHRASE, Level, RiskStateStore
+
+    store = MarketDataStore(PROJECT_ROOT / settings.storage.sqlite_path)
+    try:
+        state = RiskStateStore(store)
+        today = datetime.now(EASTERN).date()
+        if action == "stop":
+            state.escalate(Level.HALTED, "manual_stop", today)
+        elif action == "ack-warning":
+            state.acknowledge_warning(today)
+        elif action == "reset":
+            if not authorization:
+                print(f'Reset requires --authorization "{RESET_PHRASE}"')
+                return 2
+            try:
+                state.manual_reset(authorization, today)
+            except PermissionError as exc:
+                print(f"REFUSED: {exc}")
+                return 2
+        level = state.level(today)
+        print(f"Kill switch: {level.name} (last trigger: {state.last_trigger() or 'none'}); "
+              f"high-water mark: {state.high_water_mark() or 'not set'}")
+        for ts, lvl, trig in store.conn.execute(
+                "SELECT ts, level, trigger FROM kill_switch_events ORDER BY id DESC LIMIT 5").fetchall():
+            print(f"  {ts}  {lvl:<15} {trig}")
+    finally:
+        store.close()
+    return 0
+
+
+def cmd_risk_replay(settings, log) -> int:
+    from core.config import PROJECT_ROOT
+    from data.collectors.historical import open_history
+    from research.risk_replay import build_risk_report
+    from risk.stress import calibrate, save
+
+    conn = open_history(PROJECT_ROOT / settings.storage.history_path)
+    try:
+        cal = calibrate(conn)
+        save(cal, PROJECT_ROOT / "config" / "stress_calibration.json")
+        print(f"Stress calibration: {cal.days:,} days; 2-hour worst drop {cal.worst_down:.1%} ({cal.worst_down_date}), "
+              f"worst rally {cal.worst_up:+.1%} ({cal.worst_up_date})")
+        path = build_risk_report(settings, conn, cal)
+    finally:
+        conn.close()
+    print(f"Report written: {path.relative_to(PROJECT_ROOT)}")
+    return 0
+
+
+def cmd_history(settings, log) -> int:
+    from core.config import PROJECT_ROOT
+    from data.collectors.historical import download_minute_bars, open_history
+
+    conn = open_history(PROJECT_ROOT / settings.storage.history_path)
+    try:
+        n = download_minute_bars(load_alpaca_credentials(settings), conn, settings.market_data.primary_underlying)
+        total, first, last = conn.execute("SELECT COUNT(*), MIN(ts), MAX(ts) FROM minute_bars").fetchone()
+    finally:
+        conn.close()
+    print(f"Downloaded {n:,} bars; history now {total:,} bars from {first} to {last}")
+    return 0
+
+
 def cmd_price(settings, log, as_of_text: str | None) -> int:
     from datetime import datetime, timezone
 
@@ -301,10 +374,12 @@ def cmd_report(settings, log, day_text: str | None, every: int) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="options-quant")
-    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report"], nargs="?", default="config")
+    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch"], nargs="?", default="config")
     parser.add_argument("--env", help="development | backtest | observation | paper | live")
     parser.add_argument("--once", action="store_true", help="collect: run a single cycle")
     parser.add_argument("--cycles", type=int, help="collect: stop after N cycles")
+    parser.add_argument("action", nargs="?", default="status", help="killswitch: status | stop | ack-warning | reset")
+    parser.add_argument("--authorization", help="killswitch reset: the exact authorization phrase")
     parser.add_argument("--any-time", action="store_true", help="scan: ignore the entry-time window")
     parser.add_argument("--date", help="report: trading day YYYY-MM-DD")
     parser.add_argument("--every", type=int, help="report / scan-report: minutes between snapshots (default 5 / 1)")
@@ -323,6 +398,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "config":
             return cmd_config(settings)
+        if args.command == "killswitch":
+            return cmd_killswitch(settings, args.action, args.authorization)
+        if args.command == "risk-replay":
+            return cmd_risk_replay(settings, get_logger("main"))
+        if args.command == "history":
+            return cmd_history(settings, get_logger("main"))
         if args.command == "scan-report":
             return cmd_scan_report(settings, get_logger("main"), args.date, args.every or 1)
         if args.command == "scan":

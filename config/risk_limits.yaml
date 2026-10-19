@@ -20,3 +20,23 @@ allow_uncovered_short_options: false
 allow_overnight_positions: false
 allow_auto_risk_increase: false
 allow_autonomous_strategy_changes: false
+
+# --- Exits (every position gets this plan before entry) ---------------------
+stop_loss_pct_of_max_loss: 0.50       # close when the loss reaches 50% of the trade's max loss
+max_holding_minutes: 120              # time exit
+mispricing_exit_z: 0.5                # close when the original mispricing has mostly disappeared
+
+# --- Portfolio exposure limits ---------------------------------------------
+max_net_delta_pct: 0.50               # |SPY-equivalent delta| x price, as a fraction of equity
+max_net_vega_pct: 0.0025              # $ per 1 vol point, as a fraction of equity
+underlying_betas: {SPY: 1.0, QQQ: 1.2}   # correlation: exposure is measured in SPY terms
+stress_loss_pct_of_daily_allowance: 1.0  # worst historical stress loss may use at most this share of today's remaining loss allowance
+
+# --- Hedging ----------------------------------------------------------------
+allow_stock_hedge: true               # SPY shares may be used to bring delta back inside limits
+max_hedge_shares: 30
+
+# --- Kill switch ---------------------------------------------------------------
+max_quote_age_with_positions_seconds: 60   # market data older than this while holding positions = emergency
+max_consecutive_execution_failures: 3
+approval_valid_seconds: 30            # a risk approval expires; each order needs a fresh one

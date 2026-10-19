@@ -181,6 +181,7 @@ class ScheduleSettings(_Strict):
 
 class StorageSettings(_Strict):
     sqlite_path: str
+    history_path: str = "data/storage/history.db"
 
 
 class LoggingSettings(_Strict):
@@ -212,6 +213,19 @@ class RiskLimits(_Strict):
     allow_overnight_positions: bool
     allow_auto_risk_increase: bool
     allow_autonomous_strategy_changes: bool
+
+    stop_loss_pct_of_max_loss: float = Field(gt=0, le=1)
+    max_holding_minutes: int = Field(ge=1, le=390)
+    mispricing_exit_z: float = Field(ge=0)
+    max_net_delta_pct: float = Field(gt=0, le=5)
+    max_net_vega_pct: float = Field(gt=0, le=0.05)
+    underlying_betas: dict[str, float]
+    stress_loss_pct_of_daily_allowance: float = Field(gt=0, le=2)
+    allow_stock_hedge: bool
+    max_hedge_shares: int = Field(ge=0)
+    max_quote_age_with_positions_seconds: float = Field(gt=0)
+    max_consecutive_execution_failures: int = Field(ge=1)
+    approval_valid_seconds: float = Field(gt=0, le=300)
 
     @model_validator(mode="after")
     def _consistent(self) -> "RiskLimits":
