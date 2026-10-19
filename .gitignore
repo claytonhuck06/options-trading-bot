@@ -16,3 +16,9 @@ logs/*
 !logs/.gitkeep
 data/storage/*.db
 data/storage/*.db-*
+
+# Downloaded market data and caches (large, re-creatable)
+data/storage/opra/
+data/storage/bt_cache/
+data/storage/.paper_demo_passed
+STOP

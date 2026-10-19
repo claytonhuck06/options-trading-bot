@@ -76,6 +76,16 @@ execution:
   max_daily_transaction_costs: 50.0   # $ of spread paid + fees per day; beyond this, no new entries
   poll_interval_seconds: 1.0
 
+databento:
+  # Paid historical data. Every download is price-quoted first (free) and refused if it would break a cap.
+  # Raising these caps is the owner's decision; nothing raises them automatically.
+  total_budget_usd: 100.00            # hard cap on all Databento spending (free credit is $125)
+  max_request_usd: 5.00               # no single download may cost more than this
+  strike_band_pct: 0.035              # contracts within ±3.5% of the previous close
+  min_days_to_expiry: 7
+  max_days_to_expiry: 30
+  history_path: data/storage/opra_history.db
+
 schedule:                             # Eastern time, HH:MM
   scan_start: "09:35"
   no_new_positions_after: "15:00"

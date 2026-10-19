@@ -160,6 +160,15 @@ class ExecutionSettings(_Strict):
     poll_interval_seconds: float = Field(gt=0, le=10)
 
 
+class DatabentoSettings(_Strict):
+    total_budget_usd: float = Field(ge=0, le=125)       # the free credit; going above needs a deliberate code change
+    max_request_usd: float = Field(gt=0, le=25)
+    strike_band_pct: float = Field(gt=0, le=0.2)
+    min_days_to_expiry: int = Field(ge=0)
+    max_days_to_expiry: int = Field(ge=1)
+    history_path: str
+
+
 class DataQualitySettings(_Strict):
     max_quote_age_seconds: float = Field(gt=0)
     max_clock_skew_seconds: float = Field(ge=0)
@@ -266,6 +275,7 @@ class Settings(_Strict):
     pricing: PricingSettings
     strategy: StrategySettings
     execution: ExecutionSettings
+    databento: DatabentoSettings
     schedule: ScheduleSettings
     storage: StorageSettings
     logging: LoggingSettings

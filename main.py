@@ -18,6 +18,8 @@ Commands:
         reset needs --authorization "<exact phrase>"; ack-warning OKs trading today during a drawdown warning.
     python main.py trade    Paper-trade until the close (needs the collector running). PAPER account only.
     python main.py paper-demo   One-time end-to-end order test on the paper account (market hours).
+    python main.py opra-history --weeks N   Download N most recent weeks of SPY option bid/ask (Databento, budget-capped).
+    python main.py databento-spend          Show Databento spending against the budget.
 
 Phase 1 cannot submit orders: there is no order-submission code in the project.
 """
@@ -265,6 +267,53 @@ def cmd_paper_demo(settings, log) -> int:
     return 0 if demo_passed(path) else 1
 
 
+def _databento(settings):
+    from core.config import PROJECT_ROOT
+    from data.collectors.databento_guard import GuardedDatabento, open_ledger
+
+    return GuardedDatabento(settings.databento, open_ledger(PROJECT_ROOT / settings.databento.history_path))
+
+
+def cmd_databento_spend(settings) -> int:
+    g = _databento(settings)
+    s = g.summary()
+    print(f"Databento spending: ${s.spent_usd:.2f} of ${s.budget_usd:.2f} budget (${s.remaining_usd:.2f} left), "
+          f"{s.requests} requests. Free credit on the account: $125.")
+    for schema, n, usd, gb in g.ledger.execute(
+            "SELECT schema, COUNT(*), SUM(quoted_usd), SUM(billable_bytes)/1e9 FROM databento_spend GROUP BY schema"):
+        print(f"  {schema:<12} {n:>5} requests  ${usd:8.2f}  {gb:6.2f} GB")
+    days = g.ledger.execute("SELECT COUNT(*), MIN(trading_date), MAX(trading_date) FROM opra_days").fetchone() \
+        if g.ledger.execute("SELECT name FROM sqlite_master WHERE name='opra_days'").fetchone() else (0, None, None)
+    print(f"Option quote history on disk: {days[0]} trading days ({days[1]} to {days[2]})")
+    return 0
+
+
+def cmd_opra_history(settings, weeks: int) -> int:
+    from datetime import date, timedelta
+
+    from core.config import PROJECT_ROOT
+    from data.collectors.historical import open_history
+    from data.collectors.opra_history import OpraHistory, trading_days
+
+    g = _databento(settings)
+    history = open_history(PROJECT_ROOT / settings.storage.history_path)
+    end = date.today() - timedelta(days=1)
+    days = trading_days(history, end - timedelta(weeks=weeks), end)
+    opra = OpraHistory(settings.databento, g, history)
+    todo = sorted(set(days) - opra.done_days())
+    est = 0.088 * len(todo)                          # measured 2026-10-19: $0.44 for a 5-day week (quotes + contract lists)
+    s = g.summary()
+    print(f"{len(todo)} trading days to download (newest first). Estimated ~${est:.2f}; "
+          f"spent so far ${s.spent_usd:.2f} of ${s.budget_usd:.2f}. Every request is price-checked against the caps.", flush=True)
+    rep = opra.download(days)
+    s = g.summary()
+    print(f"Downloaded {rep.days_done} days ({rep.days_skipped_existing} already on disk). "
+          f"Spent ${s.spent_usd:.2f} of ${s.budget_usd:.2f}.")
+    if rep.stopped_reason:
+        print(f"STOPPED: {rep.stopped_reason}")
+    return 0
+
+
 def cmd_killswitch(settings, action: str, authorization: str | None) -> int:
     from datetime import datetime
 
@@ -429,12 +478,13 @@ def cmd_report(settings, log, day_text: str | None, every: int) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="options-quant")
-    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo"], nargs="?", default="config")
+    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend"], nargs="?", default="config")
     parser.add_argument("--env", help="development | backtest | observation | paper | live")
     parser.add_argument("--once", action="store_true", help="collect: run a single cycle")
     parser.add_argument("--cycles", type=int, help="collect: stop after N cycles")
     parser.add_argument("action", nargs="?", default="status", help="killswitch: status | stop | ack-warning | reset")
     parser.add_argument("--authorization", help="killswitch reset: the exact authorization phrase")
+    parser.add_argument("--weeks", type=int, default=1, help="opra-history: how many recent weeks")
     parser.add_argument("--any-time", action="store_true", help="scan: ignore the entry-time window")
     parser.add_argument("--date", help="report: trading day YYYY-MM-DD")
     parser.add_argument("--every", type=int, help="report / scan-report: minutes between snapshots (default 5 / 1)")
@@ -453,6 +503,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "config":
             return cmd_config(settings)
+        if args.command == "databento-spend":
+            return cmd_databento_spend(settings)
+        if args.command == "opra-history":
+            return cmd_opra_history(settings, args.weeks)
         if args.command == "trade":
             return cmd_trade(settings, get_logger("main"))
         if args.command == "paper-demo":

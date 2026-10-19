@@ -48,7 +48,7 @@ def fetch_fred(series: str, timeout: float = 20.0) -> list[tuple[date, float]]:
 def update_rates(settings: Settings, store: MarketDataStore) -> dict[str, int]:
     counts = {}
     for series in settings.pricing.rate_series:
-        obs = fetch_fred(series)[-400:]              # ~1.5 years is plenty
+        obs = fetch_fred(series)[-3000:]             # ~12 years: enough for backtests
         counts[series] = store.upsert_rates(series, obs)
     store.log_event("INFO", "rates_updated", counts)
     return counts
