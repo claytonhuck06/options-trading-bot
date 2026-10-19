@@ -164,3 +164,22 @@ class OptionsCollector:
                 self.sleep(backoff)
         self.store.log_event("INFO", "collector_stopped", {"reason": "max_cycles", "cycles": done})
         return done
+
+
+def wait_for_open(market_clock: Callable[[], dict], sleep: Callable[[float], None] = time.sleep,
+                  now: Callable[[], datetime] = utcnow, max_wait_hours: float = 3.0, store: MarketDataStore | None = None) -> bool:
+    """Sleep until the market opens. Returns False (without waiting) if the next
+    open is more than max_wait_hours away — a weekend or market holiday."""
+    while True:
+        clock = market_clock()
+        if clock["is_open"]:
+            return True
+        next_open = datetime.fromisoformat(clock["next_open"])
+        wait = (next_open - now()).total_seconds()
+        if wait > max_wait_hours * 3600:
+            log.info("market not opening soon (next open %s) — nothing to collect today", clock["next_open"])
+            if store:
+                store.log_event("INFO", "collector_skipped_day", {"next_open": clock["next_open"]})
+            return False
+        log.info("waiting %.0f min for market open at %s", max(wait, 0) / 60, clock["next_open"])
+        sleep(min(max(wait, 5.0), 600.0))      # re-check the clock at least every 10 min

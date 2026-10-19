@@ -6,6 +6,7 @@ Commands:
     python main.py collect  Collect SPY options quotes into SQLite (market hours only).
         --once              Run one cycle (works when the market is closed, for testing).
         --cycles N          Stop after N cycles.
+        --wait-for-open     If started before the open, wait for it (used by the daily schedule).
 
 Phase 1 cannot submit orders: there is no order-submission code in the project.
 """
@@ -74,10 +75,10 @@ def cmd_check(settings, log) -> int:
     return 0
 
 
-def cmd_collect(settings, log, once: bool, cycles: int | None) -> int:
+def cmd_collect(settings, log, once: bool, cycles: int | None, wait: bool = False) -> int:
     from core.config import PROJECT_ROOT
     from data.collectors.alpaca_source import AlpacaMarketSource
-    from data.collectors.options_collector import OptionsCollector
+    from data.collectors.options_collector import OptionsCollector, wait_for_open
     from data.storage.db import MarketDataStore
 
     creds = load_alpaca_credentials(settings)
@@ -93,6 +94,9 @@ def cmd_collect(settings, log, once: bool, cycles: int | None) -> int:
             print(f"Cycle {r.cycle_id}: {r.received} quotes, {r.new} new, {r.repeat} repeats, {r.unusable} unusable")
             print(f"Quality flags: {r.flag_counts}")
         else:
+            if wait and not wait_for_open(source.broker.market_clock, store=store):
+                print("Market is not opening today — exiting.")
+                return 0
             n = collector.run(lambda: source.broker.market_clock()["is_open"], max_cycles=cycles)
             print(f"Completed {n} cycles")
     except KeyboardInterrupt:
@@ -109,6 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--env", help="development | backtest | observation | paper | live")
     parser.add_argument("--once", action="store_true", help="collect: run a single cycle")
     parser.add_argument("--cycles", type=int, help="collect: stop after N cycles")
+    parser.add_argument("--wait-for-open", action="store_true", help="collect: wait for the market to open")
     args = parser.parse_args(argv)
 
     try:
@@ -123,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "config":
             return cmd_config(settings)
         if args.command == "collect":
-            return cmd_collect(settings, get_logger("main"), args.once, args.cycles)
+            return cmd_collect(settings, get_logger("main"), args.once, args.cycles, args.wait_for_open)
         return cmd_check(settings, get_logger("main"))
     except ConfigError as exc:
         log.error("configuration error: %s", exc)

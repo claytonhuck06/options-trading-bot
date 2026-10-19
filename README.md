@@ -28,6 +28,22 @@ file (see `.env.example`). Keys are never printed or logged.
 .venv/bin/python -m pytest                 # test suite
 ```
 
+## Daily automatic collection
+
+A macOS launchd job (`com.optionsquant.collector`) runs `scripts/run_collector.sh`
+at 8:15 a.m. local (Central) time Monday–Friday. It waits for the 9:30 ET open,
+collects until the close, and exits on holidays. Logs: `logs/collector_<date>.log`.
+
+- The Mac must be on and awake. The job keeps it from idle-sleeping while it
+  collects, but closing the lid still sleeps it. A run missed during sleep starts
+  when the Mac wakes.
+- Keys are read from the `export ALPACA_...` lines in `~/.zshrc`.
+
+```bash
+launchctl bootout gui/$(id -u)/com.optionsquant.collector   # turn off
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.optionsquant.collector.plist  # turn on
+```
+
 ## Architecture
 
 | Folder | Role | Phase |

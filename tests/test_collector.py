@@ -98,3 +98,27 @@ def test_clock_failure_does_not_collect_blindly():
     with pytest.raises(RuntimeError, match="halted"):
         c.run(broken)
     assert src.chain_calls == 0
+
+
+def _clock(states):
+    it = iter(states)
+    return lambda: next(it)
+
+
+def test_wait_for_open_sleeps_until_open():
+    from data.collectors.options_collector import wait_for_open
+    soon = (NOW + timedelta(minutes=15)).isoformat()
+    sleeps = []
+    assert wait_for_open(_clock([{"is_open": False, "next_open": soon}, {"is_open": True, "next_open": soon}]),
+                         sleep=sleeps.append, now=lambda: NOW) is True
+    assert sleeps == [600.0]                 # capped so the clock is re-checked
+
+
+def test_wait_for_open_skips_holidays_and_weekends():
+    from data.collectors.options_collector import wait_for_open
+    store = MarketDataStore(":memory:")
+    later = (NOW + timedelta(days=2)).isoformat()
+    sleeps = []
+    assert wait_for_open(_clock([{"is_open": False, "next_open": later}]), sleep=sleeps.append, now=lambda: NOW, store=store) is False
+    assert sleeps == []
+    assert store.conn.execute("SELECT event FROM system_events").fetchone()[0] == "collector_skipped_day"

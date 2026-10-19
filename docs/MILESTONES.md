@@ -33,9 +33,10 @@ Requirement: several complete sessions of usable SPY options data, no silent gap
 - [x] Repeated unchanged quotes counted, not stored as fresh observations
 - [x] 15s loop, market hours only, exponential backoff, halts after 20 failures in a row
 - [x] Strike band (±10% of spot) to keep storage ~1 GB per trading day
-- [x] 85 automated tests
+- [x] 87 automated tests
 - [x] First live run: 16 clean cycles, 0 failures, ~1,590 quotes per cycle, <1% unusable
-- [ ] Collect several complete trading sessions (run `main.py collect` each trading day)
+- [x] Weekday auto-start (launchd, 8:15 CT), waits for open, skips holidays, single instance
+- [ ] Collect several complete trading sessions (auto-collecting from 2026-10-20)
 
 Findings:
 - **OPRA feed refused** ("OPRA agreement is not signed"). Running on Alpaca's free
