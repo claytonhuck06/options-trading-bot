@@ -1,0 +1,4 @@
+# Live market data, hypothetical trades only. No orders.
+trading:
+  enabled: false
+  allow_order_submission: false

@@ -1,0 +1,4 @@
+alpaca-py==0.44.0
+pydantic==2.14.1
+pytest==9.1.1
+PyYAML==6.0.3

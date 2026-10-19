@@ -1,0 +1,7 @@
+# Alpaca paper trading. Order submission stays off until the risk engine
+# (Phase 5) and execution engine (Phase 6) are built and tested.
+broker:
+  account_type: paper
+trading:
+  enabled: false
+  allow_order_submission: false

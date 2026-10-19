@@ -1,0 +1,3 @@
+# Local development. No broker orders, ever.
+logging:
+  level: DEBUG

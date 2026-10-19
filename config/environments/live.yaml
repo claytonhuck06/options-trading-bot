@@ -1,0 +1,8 @@
+# REAL MONEY. Loading this environment also requires the
+# OPTIONS_QUANT_LIVE_AUTHORIZATION environment variable (see README).
+# Live trading is not supported in the current build and will be refused.
+broker:
+  account_type: live
+trading:
+  enabled: false
+  allow_order_submission: false

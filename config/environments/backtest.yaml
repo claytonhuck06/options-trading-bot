@@ -1,0 +1,3 @@
+# Historical backtesting. Never talks to the trading API.
+storage:
+  sqlite_path: data/storage/backtest.db

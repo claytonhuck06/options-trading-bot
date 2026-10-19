@@ -1,0 +1,22 @@
+# Authoritative risk limits. Percentages are fractions of the relevant
+# equity reference (0.005 = 0.50%). Changing these is a deliberate,
+# version-controlled human decision — never automatic.
+
+reference_equity: 20000.00            # hypothetical starting equity
+
+per_trade_risk_pct: 0.005             # 0.50% of start-of-day equity
+aggregate_planned_risk_pct: 0.025     # 2.50% across open trades
+daily_loss_limit_pct: 0.015           # 1.50% of start-of-day equity
+daily_profit_stop_pct: 0.05           # 5.00% ceiling, not a target
+drawdown_warning_pct: 0.05            # 5% below equity high-water mark
+drawdown_shutdown_pct: 0.10           # 10% below equity high-water mark
+
+max_concurrent_positions: 3
+preferred_concurrent_positions: 2
+
+take_profit_pct_of_risk: 0.20         # 20% of capital at risk in the trade
+
+allow_uncovered_short_options: false
+allow_overnight_positions: false
+allow_auto_risk_increase: false
+allow_autonomous_strategy_changes: false

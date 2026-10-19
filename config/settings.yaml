@@ -1,0 +1,41 @@
+# Base settings shared by every environment.
+# Environment files in config/environments/ override these values.
+# Risk limits live separately in risk_limits.yaml.
+
+app:
+  name: options-quant
+  timezone: America/New_York
+
+# Trading is OFF by default. Phase 1 has no order-submission code at all;
+# this flag exists so later phases have one authoritative switch.
+trading:
+  enabled: false
+  allow_order_submission: false
+
+broker:
+  name: alpaca
+  # "paper" or "live". Must match the environment (see core/config.py).
+  account_type: paper
+
+market_data:
+  primary_underlying: SPY
+  additional_underlyings: []          # QQQ etc. later
+  stock_feed: iex                     # free feed; "sip" needs a paid plan
+  option_feed: indicative             # "opra" needs a paid plan
+  poll_interval_seconds: 15
+  min_days_to_expiry: 7
+  max_days_to_expiry: 30
+
+schedule:                             # Eastern time, HH:MM
+  scan_start: "09:35"
+  no_new_positions_after: "15:00"
+  begin_closing: "15:30"
+  target_flat_by: "15:45"
+
+storage:
+  sqlite_path: data/storage/options_quant.db
+
+logging:
+  level: INFO
+  directory: logs
+  json_file: options_quant.jsonl
