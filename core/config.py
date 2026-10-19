@@ -150,6 +150,16 @@ class StrategySettings(_Strict):
         return sorted(set(v))
 
 
+class ExecutionSettings(_Strict):
+    require_manual_confirmation: bool = False
+    order_timeout_seconds: float = Field(gt=0, le=300)
+    max_reprice_attempts: int = Field(ge=1, le=10)
+    entry_start_fraction: float = Field(ge=0, le=1)
+    max_price_deterioration: float = Field(ge=0)
+    max_daily_transaction_costs: float = Field(ge=0)
+    poll_interval_seconds: float = Field(gt=0, le=10)
+
+
 class DataQualitySettings(_Strict):
     max_quote_age_seconds: float = Field(gt=0)
     max_clock_skew_seconds: float = Field(ge=0)
@@ -255,6 +265,7 @@ class Settings(_Strict):
     data_quality: DataQualitySettings
     pricing: PricingSettings
     strategy: StrategySettings
+    execution: ExecutionSettings
     schedule: ScheduleSettings
     storage: StorageSettings
     logging: LoggingSettings
@@ -276,8 +287,10 @@ class Settings(_Strict):
 
     @property
     def can_submit_orders(self) -> bool:
-        # Phase 1: no execution engine exists, so this is always False.
-        return False
+        """Orders may only ever be sent to the PAPER account, and only when both trading switches are on.
+        Live order submission is not built and stays impossible here."""
+        return (self.environment is Environment.PAPER and self.broker.account_type == "paper"
+                and self.trading.enabled and self.trading.allow_order_submission)
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

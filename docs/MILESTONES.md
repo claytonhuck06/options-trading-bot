@@ -114,7 +114,26 @@ Findings:
 - With 3 positions × ~$100 risk and 50% stops, normal days lose far less than the $300 daily limit;
   that limit is a backstop for gaps and failures.
 
-## Phase 6 — Paper execution and reconciliation
+## Phase 6 — Paper execution and reconciliation 🟡 (built 2026-10-19; live paper demo runs 2026-10-20)
+Requirement: orders placed, modified, cancelled, filled and reconciled correctly in paper, including failures.
+- [x] One module (`execution/alpaca_paper.py`) may send/cancel orders; hard-wired to the PAPER endpoint and paper keys
+- [x] Orders only possible in the paper environment with both trading switches on (now on, per owner)
+- [x] Spreads sent as single multi-leg orders (legs fill together); signed net price (+ debit / − credit,
+      per Alpaca's order API reference)
+- [x] Fresh risk approval re-checked right before every opening order; abandoned if expired
+- [x] Limit pricing from mid toward executable, cancel-and-resubmit (no in-place modify), never past the worst price
+- [x] Orders written to the database before sending; ambiguous sends looked up, never re-sent
+- [x] Partial fills, rejections, lost responses, fill/cancel races, legged fills handled and tested
+- [x] Daily transaction-cost cap; consecutive execution failures feed the kill switch
+- [x] Reconciliation against broker positions and open orders (broker is the truth); uncovered-short detection
+- [x] Crash recovery: check unresolved orders with the broker, reconcile, halt if anything disagrees
+- [x] Trading session cycle: reconcile → kill switch → exits (incl. emergency flatten, STOP file) → entries
+- [x] Orders go through automatically (no confirmation prompt, per owner); prompt available in settings
+- [x] Weekday auto-start at 8:40 CT (`scripts/run_trader.sh`); first run executes the paper demo and only
+      trades if it passes
+- [x] 236 automated tests passing
+- [ ] Paper demo on the real paper account (scheduled for the 2026-10-20 session)
+
 ## Phase 7 — Backtesting (requires suitable historical quote data)
 ## Phase 8 — Observation mode, then 60–90+ days of paper trading
 ## Phase 9 — Qwen analyst (Ollama installed; no model pulled yet)

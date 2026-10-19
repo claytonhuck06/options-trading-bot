@@ -4,7 +4,7 @@ Local-first quantitative options trading research platform (SPY first), built
 phase by phase per the master plan. See [docs/MILESTONES.md](docs/MILESTONES.md)
 for status.
 
-**Current state: Phase 5 risk engine (research only; still no order code). The system cannot place, change or cancel
+**Current state: Phase 6 — automatic PAPER trading (Alpaca paper account only; no live-money code). The system cannot place, change or cancel
 orders — that code does not exist yet.**
 
 ## Setup
@@ -32,6 +32,8 @@ file (see `.env.example`). Keys are never printed or logged.
 .venv/bin/python main.py history --env paper        # download SPY minute bars since 2016 (free)
 .venv/bin/python main.py risk-replay --env paper    # stress calibration + 10-year risk-control replay
 .venv/bin/python main.py killswitch --env paper     # status | stop | ack-warning | reset --authorization "..."
+.venv/bin/python main.py paper-demo --env paper     # end-to-end order test on the paper account (market hours)
+.venv/bin/python main.py trade --env paper          # paper-trade until the close (collector must be running)
 .venv/bin/python -m pytest                 # test suite
 ```
 
@@ -51,6 +53,18 @@ launchctl bootout gui/$(id -u)/com.optionsquant.collector   # turn off
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.optionsquant.collector.plist  # turn on
 ```
 
+## Daily automatic paper trading
+
+A second launchd job (`com.optionsquant.trader`) runs `scripts/run_trader.sh` at 8:40 a.m. Central on weekdays,
+10 minutes after the open. It needs the collector running. The first time it runs the paper demo, and it only trades
+if that passes. Log: `logs/trader_<date>.log`.
+
+**To stop trading immediately**, any of these work:
+- create a file named `STOP` in the project folder (the kill switch halts and flattens on the next cycle)
+- `.venv/bin/python main.py killswitch stop --env paper`
+- set `trading.enabled: false` in `config/environments/paper.yaml`
+- `launchctl bootout gui/$(id -u)/com.optionsquant.trader` (turns off the daily start)
+
 ## Architecture
 
 | Folder | Role | Phase |
@@ -64,7 +78,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.optionsquant.collect
 | `research/` | pricing-residual and scanner-replay reports | 3, 4 |
 | `strategies/` | vertical spread builder, scoring and rejection rules | 4 |
 | `risk/` | sizing, positions, risk engine, exits, hedging, kill switch, history-calibrated stress | 5 |
-| `execution/` | orders, reconciliation | 6 |
+| `execution/` | paper broker, order manager, reconciliation, crash recovery, trading session | 6 |
 | `backtesting/`, `research/` | event-driven backtests, pattern discovery | 7, 10 |
 | `agents/` | Qwen analyst (read-only, advisory) | 9 |
 | `monitoring/` | dashboard, alerts | 12 |

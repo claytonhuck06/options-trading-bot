@@ -16,6 +16,8 @@ Commands:
     python main.py risk-replay  Recalibrate stress scenarios and replay the risk controls over history.
     python main.py killswitch status|stop|ack-warning|reset   Inspect or operate the kill switch.
         reset needs --authorization "<exact phrase>"; ack-warning OKs trading today during a drawdown warning.
+    python main.py trade    Paper-trade until the close (needs the collector running). PAPER account only.
+    python main.py paper-demo   One-time end-to-end order test on the paper account (market hours).
 
 Phase 1 cannot submit orders: there is no order-submission code in the project.
 """
@@ -210,6 +212,59 @@ def cmd_scan_report(settings, log, day_text: str | None, every: int) -> int:
     return 0
 
 
+def _paper_session(settings):
+    from core.config import PROJECT_ROOT
+    from data.storage.db import MarketDataStore
+    from execution.alpaca_paper import AlpacaPaperBroker
+    from execution.trader import TradingSession
+
+    store = MarketDataStore(PROJECT_ROOT / settings.storage.sqlite_path)
+    return TradingSession(settings, store, AlpacaPaperBroker(settings, load_alpaca_credentials(settings))), store
+
+
+def cmd_trade(settings, log) -> int:
+    import time as _t
+
+    from execution.broker import ReadOnlyBroker
+
+    session, store = _paper_session(settings)
+    clock = ReadOnlyBroker(settings, load_alpaca_credentials(settings))
+    try:
+        rep = session.startup()
+        print(f"Startup: {rep.recon.summary()}")
+        while clock.market_clock()["is_open"]:
+            r = session.cycle()
+            line = f"{r.at:%H:%M:%S} {r.level}"
+            if r.triggers:
+                line += f" triggers={r.triggers}"
+            if r.exits:
+                line += f" exits={r.exits}"
+            if r.entry:
+                line += f" entry={r.entry}"
+            if r.notes:
+                line += f" notes={r.notes}"
+            print(line, flush=True)
+            _t.sleep(settings.market_data.poll_interval_seconds)
+        print("Market closed — trading session ended.")
+    finally:
+        store.close()
+    return 0
+
+
+def cmd_paper_demo(settings, log) -> int:
+    from core.config import PROJECT_ROOT
+    from execution.demo import run_demo
+
+    session, store = _paper_session(settings)
+    from execution.demo import demo_passed
+    try:
+        path = run_demo(settings, session)
+    finally:
+        store.close()
+    print(f"Report written: {path.relative_to(PROJECT_ROOT)}")
+    return 0 if demo_passed(path) else 1
+
+
 def cmd_killswitch(settings, action: str, authorization: str | None) -> int:
     from datetime import datetime
 
@@ -374,7 +429,7 @@ def cmd_report(settings, log, day_text: str | None, every: int) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="options-quant")
-    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch"], nargs="?", default="config")
+    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo"], nargs="?", default="config")
     parser.add_argument("--env", help="development | backtest | observation | paper | live")
     parser.add_argument("--once", action="store_true", help="collect: run a single cycle")
     parser.add_argument("--cycles", type=int, help="collect: stop after N cycles")
@@ -398,6 +453,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "config":
             return cmd_config(settings)
+        if args.command == "trade":
+            return cmd_trade(settings, get_logger("main"))
+        if args.command == "paper-demo":
+            return cmd_paper_demo(settings, get_logger("main"))
         if args.command == "killswitch":
             return cmd_killswitch(settings, args.action, args.authorization)
         if args.command == "risk-replay":

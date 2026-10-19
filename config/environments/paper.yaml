@@ -1,7 +1,7 @@
-# Alpaca paper trading. Order submission stays off until the risk engine
-# (Phase 5) and execution engine (Phase 6) are built and tested.
+# Alpaca paper trading. Orders go to the PAPER account automatically (no confirmation prompt),
+# always through the risk engine and kill switch. Set either switch to false to stop sending orders.
 broker:
   account_type: paper
 trading:
-  enabled: false
-  allow_order_submission: false
+  enabled: true
+  allow_order_submission: true

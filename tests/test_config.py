@@ -6,13 +6,13 @@ SAFE_ENVS = ["development", "backtest", "observation", "paper"]
 
 
 @pytest.mark.parametrize("env", SAFE_ENVS)
-def test_every_safe_environment_loads_with_trading_off(env):
+def test_every_safe_environment_loads_on_a_paper_account(env):
     s = load_settings(env)
     assert s.environment == Environment(env)
-    assert s.trading.enabled is False
-    assert s.trading.allow_order_submission is False
-    assert s.can_submit_orders is False
     assert s.broker.account_type == "paper"
+    if env != "paper":                       # only the paper environment may ever send orders
+        assert s.trading.enabled is False and s.trading.allow_order_submission is False
+        assert s.can_submit_orders is False
 
 
 def test_default_environment_is_development():
@@ -91,14 +91,20 @@ def test_paper_env_cannot_point_at_live_account(config_dir, edit_yaml):
 
 
 def test_order_submission_requires_trading_enabled(config_dir, edit_yaml):
-    edit_yaml(config_dir / "environments" / "paper.yaml", trading__allow_order_submission=True)
+    edit_yaml(config_dir / "environments" / "paper.yaml", trading__enabled=False, trading__allow_order_submission=True)
     with pytest.raises(ConfigError, match="requires trading.enabled"):
         load_settings("paper", config_dir=config_dir)
 
 
-def test_can_submit_orders_stays_false_even_if_flags_set(config_dir, edit_yaml):
-    edit_yaml(config_dir / "environments" / "paper.yaml", trading__enabled=True, trading__allow_order_submission=True)
-    assert load_settings("paper", config_dir=config_dir).can_submit_orders is False
+def test_orders_only_possible_on_paper_with_both_switches(config_dir, edit_yaml):
+    edit_yaml(config_dir / "environments" / "paper.yaml", trading__enabled=False, trading__allow_order_submission=False)
+    assert load_settings("paper", config_dir=config_dir).can_submit_orders is False          # both off
+    edit_yaml(config_dir / "environments" / "paper.yaml", trading__enabled=True)
+    assert load_settings("paper", config_dir=config_dir).can_submit_orders is False          # one switch is not enough
+    edit_yaml(config_dir / "environments" / "paper.yaml", trading__allow_order_submission=True)
+    assert load_settings("paper", config_dir=config_dir).can_submit_orders is True
+    for env in ("development", "backtest", "observation"):
+        assert load_settings(env, config_dir=config_dir).can_submit_orders is False
 
 
 @pytest.mark.parametrize(

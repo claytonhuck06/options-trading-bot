@@ -67,6 +67,15 @@ strategy:
   min_target_probability: 0.25        # chance of reaching the profit target within the holding period
   max_candidates_per_scan: 20
 
+execution:
+  require_manual_confirmation: false  # true = ask a person "send this order? (yes/no)" before every opening order
+  order_timeout_seconds: 20           # an unfilled order is cancelled after this long
+  max_reprice_attempts: 3             # cancel-and-resubmit steps toward the executable price
+  entry_start_fraction: 0.5           # first limit sits halfway between mid and the executable price
+  max_price_deterioration: 0.05       # $/share worse than the approved price: abort instead of chasing
+  max_daily_transaction_costs: 50.0   # $ of spread paid + fees per day; beyond this, no new entries
+  poll_interval_seconds: 1.0
+
 schedule:                             # Eastern time, HH:MM
   scan_start: "09:35"
   no_new_positions_after: "15:00"
