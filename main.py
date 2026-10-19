@@ -20,6 +20,7 @@ Commands:
     python main.py paper-demo   One-time end-to-end order test on the paper account (market hours).
     python main.py opra-history --weeks N   Download N most recent weeks of SPY option bid/ask (Databento, budget-capped).
     python main.py databento-spend          Show Databento spending against the budget.
+    python main.py vol-study                Intraday volatility-pattern study on the downloaded quote history.
 
 Phase 1 cannot submit orders: there is no order-submission code in the project.
 """
@@ -314,6 +315,25 @@ def cmd_opra_history(settings, weeks: int) -> int:
     return 0
 
 
+def cmd_vol_study(settings) -> int:
+    from core.config import PROJECT_ROOT
+    from backtesting.data import available_days
+    from research.intraday_vol_study import STUDY_DIR, build_report, run_multi_day, run_study
+
+    days = available_days()
+    if len(days) < 5:
+        print("Not enough downloaded days yet (run opra-history first).")
+        return 1
+    iv, trades = run_study(settings, days)
+    iv.to_parquet(STUDY_DIR / "intraday_iv.parquet", index=False)
+    trades.to_parquet(STUDY_DIR / "iron_fly_trades.parquet", index=False)
+    md = run_multi_day(settings, days)
+    md.to_parquet(STUDY_DIR / "iron_fly_multiday.parquet", index=False)
+    path = build_report(iv, trades, multi_day=md)
+    print(f"{len(days)} days studied. Report written: {path.relative_to(PROJECT_ROOT)}")
+    return 0
+
+
 def cmd_killswitch(settings, action: str, authorization: str | None) -> int:
     from datetime import datetime
 
@@ -478,7 +498,7 @@ def cmd_report(settings, log, day_text: str | None, every: int) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="options-quant")
-    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend"], nargs="?", default="config")
+    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study"], nargs="?", default="config")
     parser.add_argument("--env", help="development | backtest | observation | paper | live")
     parser.add_argument("--once", action="store_true", help="collect: run a single cycle")
     parser.add_argument("--cycles", type=int, help="collect: stop after N cycles")
@@ -503,6 +523,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "config":
             return cmd_config(settings)
+        if args.command == "vol-study":
+            return cmd_vol_study(settings)
         if args.command == "databento-spend":
             return cmd_databento_spend(settings)
         if args.command == "opra-history":
