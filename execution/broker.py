@@ -14,7 +14,7 @@ from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockLatestTradeRequest
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import QueryOrderStatus
-from alpaca.trading.requests import GetOrdersRequest
+from alpaca.trading.requests import GetOptionContractsRequest, GetOrdersRequest
 
 from core.config import ConfigError, Settings
 from core.secrets import AlpacaCredentials
@@ -79,3 +79,16 @@ class ReadOnlyBroker:
     def latest_underlying_trade(self, symbol: str) -> dict:
         trade = self.__data.get_stock_latest_trade(StockLatestTradeRequest(symbol_or_symbols=symbol, feed=self._stock_feed))[symbol]
         return {"symbol": symbol, "price": float(trade.price), "timestamp": trade.timestamp.isoformat(), "feed": self._stock_feed.value}
+
+    def option_contracts(self, underlying: str, expiration_gte, expiration_lte) -> list:
+        """All active option contracts for an underlying in an expiry window (follows pagination)."""
+        contracts, token = [], None
+        while True:
+            page = self.__trading.get_option_contracts(GetOptionContractsRequest(
+                underlying_symbols=[underlying], expiration_date_gte=expiration_gte,
+                expiration_date_lte=expiration_lte, limit=1000, page_token=token,
+            ))
+            contracts.extend(page.option_contracts or [])
+            token = page.next_page_token
+            if not token:
+                return contracts

@@ -3,6 +3,9 @@
 Commands:
     python main.py config   Show the validated configuration and today's dollar limits.
     python main.py check    Also connect to Alpaca (read-only) and report account status.
+    python main.py collect  Collect SPY options quotes into SQLite (market hours only).
+        --once              Run one cycle (works when the market is closed, for testing).
+        --cycles N          Stop after N cycles.
 
 Phase 1 cannot submit orders: there is no order-submission code in the project.
 """
@@ -71,10 +74,41 @@ def cmd_check(settings, log) -> int:
     return 0
 
 
+def cmd_collect(settings, log, once: bool, cycles: int | None) -> int:
+    from core.config import PROJECT_ROOT
+    from data.collectors.alpaca_source import AlpacaMarketSource
+    from data.collectors.options_collector import OptionsCollector
+    from data.storage.db import MarketDataStore
+
+    creds = load_alpaca_credentials(settings)
+    source = AlpacaMarketSource(settings, creds)
+    store = MarketDataStore(PROJECT_ROOT / settings.storage.sqlite_path)
+    collector = OptionsCollector(settings, source, store)
+    print(f"Collecting {collector.underlying} options (feed={source.option_feed}) into {settings.storage.sqlite_path}")
+    if source.option_feed == "indicative":
+        print("NOTE: indicative quotes are not actual OPRA exchange quotes; do not treat them as executable prices.")
+    try:
+        if once:
+            r = collector.collect_once()
+            print(f"Cycle {r.cycle_id}: {r.received} quotes, {r.new} new, {r.repeat} repeats, {r.unusable} unusable")
+            print(f"Quality flags: {r.flag_counts}")
+        else:
+            n = collector.run(lambda: source.broker.market_clock()["is_open"], max_cycles=cycles)
+            print(f"Completed {n} cycles")
+    except KeyboardInterrupt:
+        store.log_event("INFO", "collector_stopped", {"reason": "keyboard_interrupt"})
+        print("Stopped.")
+    finally:
+        store.close()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="options-quant")
-    parser.add_argument("command", choices=["config", "check"], nargs="?", default="config")
+    parser.add_argument("command", choices=["config", "check", "collect"], nargs="?", default="config")
     parser.add_argument("--env", help="development | backtest | observation | paper | live")
+    parser.add_argument("--once", action="store_true", help="collect: run a single cycle")
+    parser.add_argument("--cycles", type=int, help="collect: stop after N cycles")
     args = parser.parse_args(argv)
 
     try:
@@ -86,7 +120,11 @@ def main(argv: list[str] | None = None) -> int:
     log = setup_logging(settings)
     log.info("starting command=%s env=%s", args.command, settings.environment.value, extra={"event": "startup"})
     try:
-        return cmd_config(settings) if args.command == "config" else cmd_check(settings, get_logger("main"))
+        if args.command == "config":
+            return cmd_config(settings)
+        if args.command == "collect":
+            return cmd_collect(settings, get_logger("main"), args.once, args.cycles)
+        return cmd_check(settings, get_logger("main"))
     except ConfigError as exc:
         log.error("configuration error: %s", exc)
         print(f"CONFIG ERROR: {exc}", file=sys.stderr)

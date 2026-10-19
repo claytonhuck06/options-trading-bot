@@ -25,6 +25,15 @@ market_data:
   poll_interval_seconds: 15
   min_days_to_expiry: 7
   max_days_to_expiry: 30
+  strike_band_pct: 0.10               # only collect strikes within ±10% of the underlying price
+  contracts_refresh_minutes: 60
+  max_consecutive_failures: 20       # collector stops after this many failed cycles in a row
+
+data_quality:
+  max_quote_age_seconds: 60           # older than this at receipt = stale
+  max_clock_skew_seconds: 5           # quote stamped this far in the future = bad timestamp
+  max_relative_spread: 0.25           # (ask-bid)/mid above this = too wide...
+  min_absolute_spread_for_wide: 0.05  # ...but only if the spread is also at least this many dollars
 
 schedule:                             # Eastern time, HH:MM
   scan_start: "09:35"

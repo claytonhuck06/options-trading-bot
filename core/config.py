@@ -79,6 +79,9 @@ class MarketDataSettings(_Strict):
     poll_interval_seconds: int = Field(ge=1, le=3600)
     min_days_to_expiry: int = Field(ge=0)
     max_days_to_expiry: int = Field(ge=1)
+    strike_band_pct: float = Field(gt=0, le=1)
+    contracts_refresh_minutes: int = Field(ge=1, le=1440)
+    max_consecutive_failures: int = Field(ge=1, le=1000)
 
     @field_validator("stock_feed")
     @classmethod
@@ -99,6 +102,13 @@ class MarketDataSettings(_Strict):
         if self.min_days_to_expiry >= self.max_days_to_expiry:
             raise ValueError("min_days_to_expiry must be less than max_days_to_expiry")
         return self
+
+
+class DataQualitySettings(_Strict):
+    max_quote_age_seconds: float = Field(gt=0)
+    max_clock_skew_seconds: float = Field(ge=0)
+    max_relative_spread: float = Field(gt=0, le=2)
+    min_absolute_spread_for_wide: float = Field(ge=0)
 
 
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
@@ -182,6 +192,7 @@ class Settings(_Strict):
     trading: TradingSettings
     broker: BrokerSettings
     market_data: MarketDataSettings
+    data_quality: DataQualitySettings
     schedule: ScheduleSettings
     storage: StorageSettings
     logging: LoggingSettings
