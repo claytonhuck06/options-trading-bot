@@ -195,7 +195,11 @@ The mispricing strategy above keeps running unchanged while the condor is resear
       (8 scheduled/yr; 2020 also 2 unscheduled + cancelled March meeting). CPI release dates 2015–2026 from BLS,
       all 140 confirmed in FRED/ALFRED (Oct 2025 CPI never published). Report: docs/research/vol_data_report_2026-10-20.md
 - [ ] Phase 1 (rest): SPY end-of-day option chains — free OptionsDX files 2010–2023 need the owner's free checkout
-- [ ] Phase 1b: volatility forecast and forecast report
+- [x] Phase 1b (2026-10-20): volatility forecast — **model bar FAILED.** On 2018–2021 forecasts (fitted monthly on
+      past data only), the full HAR-RV+VIX model scored the same as VIX alone (QLIKE 0.882 vs 0.881, DM p = 0.54).
+      VIX already contains what recent movement, down days and FOMC/CPI dates tell you. Per the pre-registration the
+      straddle and the condor forecast gate are no-go; the plain condor test continues. 2022+ (information only):
+      slightly better than VIX, p = 0.09, not enough and not usable. Report: docs/research/vol_forecast_report_2026-10-20.md
 - [ ] Phase 2: condor and straddle builder · Phase 3: backtest · Phase 4: owner go/no-go
 
 ## Phase 7 — Backtesting (requires suitable historical quote data)

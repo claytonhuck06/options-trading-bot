@@ -239,3 +239,9 @@ straddle is capped at **4%**, so a straddle can open only while ≤ 1% of condor
    by then (data from January 2016, i.e. two years of data, about 23 months of finished outcomes).
 4. **Events counted:** scheduled FOMC statements (including the scheduled-then-cancelled March 2020 meeting) and
    CPI releases, which are published in advance. Unscheduled meetings are excluded because they weren't known ahead of time.
+
+### Result note (2026-10-20): forecast model bar failed
+
+`docs/research/vol_forecast_report_2026-10-20.md`: in discovery, M2 QLIKE 0.8823 vs M0 (VIX) 0.8809, one-sided DM
+p = 0.54. Under F1.2 the straddle (F1.5) and the condor gate (F1.4) are **no-go** and won't be backtested. Sections
+B–E (plain condor) are unaffected and continue. Any new straddle idea would be a new, separately pre-registered test.
