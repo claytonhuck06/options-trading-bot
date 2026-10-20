@@ -106,7 +106,7 @@ class GuardedDatabento:
             (datetime.now(timezone.utc).isoformat(), dataset, schema, start, end, len(symbols), cost, size, "downloading"))
         self.ledger.commit()
         try:
-            with _plain_errors():
+            with _plain_errors(), _time_limit(REQUEST_TIMEOUT_SECONDS):
                 data = self._client.timeseries.get_range(**request)
         except Exception as exc:
             # Databento may still bill a request that failed mid-way; keep it counted against the budget.
@@ -118,6 +118,34 @@ class GuardedDatabento:
         log.info("databento %s %s..%s %d symbols: $%.4f (total $%.2f of $%.2f)", schema, start, end, len(symbols), cost,
                  s.spent_usd + cost, s.budget_usd)
         return data
+
+
+REQUEST_TIMEOUT_SECONDS = 300
+
+
+class _time_limit:
+    """Abort a download that hangs (the client has no timeout of its own). Main thread only; elsewhere a no-op."""
+
+    def __init__(self, seconds: int):
+        self.seconds = seconds
+
+    def __enter__(self):
+        import signal
+        import threading
+        self.active = threading.current_thread() is threading.main_thread()
+        if self.active:
+            def _raise(signum, frame):
+                raise TimeoutError(f"Databento did not answer within {self.seconds} s")
+            self.previous = signal.signal(signal.SIGALRM, _raise)
+            signal.alarm(self.seconds)
+        return self
+
+    def __exit__(self, *exc):
+        if self.active:
+            import signal
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, self.previous)
+        return False
 
 
 class _plain_errors:

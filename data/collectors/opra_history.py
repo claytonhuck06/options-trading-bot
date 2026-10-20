@@ -26,6 +26,7 @@ from data.collectors.databento_guard import BudgetExceeded, GuardedDatabento
 log = get_logger("opra_history")
 EASTERN = ZoneInfo("America/New_York")
 DATASET = "OPRA.PILLAR"
+SYMBOLS_PER_REQUEST = 50          # smaller requests survive slow server periods; billing is by data size, not request
 
 INDEX = """
 CREATE TABLE IF NOT EXISTS opra_days (
@@ -120,6 +121,10 @@ class OpraHistory:
             except BudgetExceeded as exc:
                 rep.stopped_reason = str(exc)
                 break
+            except Exception as exc:              # a slow or failed Databento response: skip this week, keep going
+                log.warning("week %s: %s — skipped; re-run to retry", week[0], str(exc)[:200])
+                rep.stopped_reason = (rep.stopped_reason or "") + f" timeout on week {week[0]};"
+                continue
             last_week_cost = self.guard.summary().spent_usd - before
             rep.days_done += len(week)
         return rep
@@ -144,8 +149,10 @@ class OpraHistory:
         symbols = sorted({s for v in per_day.values() for s in v})
         if not symbols:
             return
-        q = self.guard.get_range(dataset=DATASET, schema="cbbo-1m", symbols=symbols, stype_in="raw_symbol",
-                                 start=start, end=end).to_df().reset_index()
+        parts = [self.guard.get_range(dataset=DATASET, schema="cbbo-1m", symbols=symbols[i:i + SYMBOLS_PER_REQUEST],
+                                      stype_in="raw_symbol", start=start, end=end).to_df().reset_index()
+                 for i in range(0, len(symbols), SYMBOLS_PER_REQUEST)]
+        q = pd.concat(parts, ignore_index=True)
         q["day"] = q["ts_recv"].dt.tz_convert(EASTERN).dt.date
         for d in week:
             sel = q[(q["day"] == d) & q["symbol"].isin(per_day[d])]

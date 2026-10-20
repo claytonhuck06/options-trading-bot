@@ -203,3 +203,14 @@ def test_widen_stops_at_its_own_ceiling(tmp_path):
     spent_before = g.spent
     rep = opra.widen(days, band_pct=0.08, run_budget_usd=1.5)   # first week costs $1; a second would exceed $1.50
     assert g.spent - spent_before == 1.0 and rep.stopped_reason and "ceiling" in rep.stopped_reason
+
+
+def test_hung_download_times_out_and_still_counts(monkeypatch):
+    import time as _t
+    import data.collectors.databento_guard as dg
+    monkeypatch.setattr(dg, "REQUEST_TIMEOUT_SECONDS", 1)
+    g, c = guard(0.10)
+    c.timeseries.get_range = lambda **kw: _t.sleep(5)
+    with pytest.raises(TimeoutError):
+        g.get_range(**REQ)
+    assert g.summary().spent_usd == pytest.approx(0.10)
