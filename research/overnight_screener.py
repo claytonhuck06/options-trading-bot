@@ -84,12 +84,13 @@ def last_completed_day(now: datetime | None = None) -> date:
 
 
 def fetch_assets(creds) -> list[dict]:
-    # Raw call: the SDK's Asset model rejects exchanges it doesn't know yet (e.g. TXSE).
-    from alpaca.trading.client import TradingClient
-    tc = TradingClient(creds.key_id, creds.secret_key, paper=True)
-    raw = tc.get("/assets", {"status": "active", "asset_class": "us_equity"})
+    """Read-only GET of the asset list (no trading client: only two files in the project may create one)."""
+    import requests
+    resp = requests.get(f"{creds.base_url}/v2/assets", params={"status": "active", "asset_class": "us_equity"},
+                        headers={"APCA-API-KEY-ID": creds.key_id, "APCA-API-SECRET-KEY": creds.secret_key}, timeout=60)
+    resp.raise_for_status()
     return [{"symbol": a["symbol"], "name": a.get("name") or "", "exchange": a["exchange"]}
-            for a in raw if a.get("tradable") and a["exchange"] in EXCHANGES]
+            for a in resp.json() if a.get("tradable") and a["exchange"] in EXCHANGES]
 
 
 def _download(client, conn: sqlite3.Connection, symbols: list[str], start: date, end: date, batch: int) -> int:
