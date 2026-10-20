@@ -473,11 +473,13 @@ def cmd_risk_replay(settings, log) -> int:
 
 def cmd_history(settings, log) -> int:
     from core.config import PROJECT_ROOT
-    from data.collectors.historical import download_minute_bars, open_history
+    from data.collectors.historical import download_minute_bars, download_raw_factors, open_history
 
     conn = open_history(PROJECT_ROOT / settings.storage.history_path)
     try:
-        n = download_minute_bars(load_alpaca_credentials(settings), conn, settings.market_data.primary_underlying)
+        creds = load_alpaca_credentials(settings)
+        n = download_minute_bars(creds, conn, settings.market_data.primary_underlying)
+        download_raw_factors(creds, conn, settings.market_data.primary_underlying)
         total, first, last = conn.execute("SELECT COUNT(*), MIN(ts), MAX(ts) FROM minute_bars").fetchone()
     finally:
         conn.close()

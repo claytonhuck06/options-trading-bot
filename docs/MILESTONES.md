@@ -168,8 +168,13 @@ Requirement: orders placed, modified, cancelled, filled and reconciled correctly
 - [x] Live-data storage cleanup: newest 5 trading days full detail, then one quote per contract per minute, after 30
       days moved to compressed files (restorable: `main.py storage restore --date D`). Paid Databento data untouched
 - [x] 288 automated tests passing
-- [ ] Multi-day strategy ($20-wing short iron butterfly, ~5-day hold) — build and backtest only if the crash test passes
-- [ ] Multi-day support inside the backtest engine (carry positions across days) — part of the strategy build
+- [x] Crash test (2026-10-19): **failed — strategy not built.** See `docs/research/multiday_crash_test_2026-10-19.md`.
+      After fixing two data errors the 5-day $20-wing short fly averages +$2.57/trade (t 0.2); spring 2025 lost
+      $3,795 per fly over 30 trades; at 3% sizing worst trade −$2,614, drawdown ≈5%
+- [x] Data fix: SPY history is dividend-adjusted; per-day raw-price factors (`raw_factors`, filled by `main.py history`)
+      now convert spot for backtests and Databento strike selection. Study no longer drops trades whose legs left the
+      downloaded strikes (priced from nearest real quotes instead)
+- [ ] Multi-day strategy and multi-day backtest engine — not built (no edge). Daily-loss-limit question moot for now
 
 ## Phase 7 — Backtesting (requires suitable historical quote data)
 ## Phase 8 — Observation mode, then 60–90+ days of paper trading

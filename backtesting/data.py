@@ -2,7 +2,7 @@
 
 Option quotes: Databento CBBO-1m files (data/storage/opra/<day>.parquet). A record
 stamped T is the national best bid/offer as of T, so it is usable at T.
-Underlying: SPY one-minute bars (history.db). A bar stamped S covers S..S+1min, so its
+Underlying: SPY one-minute bars (history.db), converted from dividend-adjusted to real traded prices. A bar stamped S covers S..S+1min, so its
 close is only known at S+1min; the spot at time T is the close of the bar stamped T-1min.
 """
 
@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from core.config import PROJECT_ROOT
+from data.collectors.historical import raw_factor
 from pricing.snapshot import SnapOption, Snapshot
 
 EASTERN = ZoneInfo("America/New_York")
@@ -82,5 +83,6 @@ def load_day(day: date, history: sqlite3.Connection, opra_dir: Path | None = Non
     meta = {s: parse_symbol(s) for s in df["symbol"].unique()}
     rows = history.execute("SELECT ts, close FROM minute_bars WHERE symbol='SPY' AND ts>=? AND ts<?",
                            (open_t.isoformat(), close_t.isoformat())).fetchall()
-    spot = {datetime.fromisoformat(ts).astimezone(timezone.utc): float(c) for ts, c in rows}
+    f = raw_factor(history, day)                  # stored bars are dividend-adjusted; strikes are real prices
+    spot = {datetime.fromisoformat(ts).astimezone(timezone.utc): float(c) * f for ts, c in rows}
     return DayData(day, quotes, spot, meta)

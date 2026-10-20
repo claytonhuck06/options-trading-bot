@@ -250,7 +250,7 @@ def build_report(iv: pd.DataFrame, trades: pd.DataFrame, out_dir: Path | None = 
     pos_disc = [r for r in rows if r[5] > 0 and r[6] > 2]
     L += ["> **Bottom line.** " + (
         f"{len(survivors)} entry/exit combination(s) made money after real bid/ask costs in BOTH the discovery and the "
-        f"confirmation period: {', '.join(f'\${w:.0f}-wing {s.split(chr(95))[0]} fly {a}→{b}' for w, a, b, s in survivors)}. "
+        f"confirmation period: {', '.join(f'\\${w:.0f}-wing {s.split(chr(95))[0]} fly {a}→{b}' for w, a, b, s in survivors)}. "
         "Candidates for a forward test, not proven strategies." if survivors else
         f"No entry/exit combination made money after real bid/ask costs in both periods "
         f"({len(pos_disc)} of {len(rows)} looked significant in discovery alone; by chance alone roughly "
@@ -324,6 +324,36 @@ def _book_at(data, t):
     return book
 
 
+def _estimate_leg(book: dict, e: date, kind: str, k: float, spot: float, now: datetime) -> tuple[float, float]:
+    """(bid, ask) for a contract with no quote. Implied vol comes from the out-of-the-money options nearest the
+    strike (puts below spot, calls above: their prices carry the volatility, in-the-money ones mostly intrinsic),
+    extended along the slope of the two nearest; Black-Scholes at that vol; the nearest one's spread plus $0.05
+    against us on each side; never below intrinsic."""
+    from pricing.black_scholes import price as bs_price
+    intrinsic = max(spot - k, 0.0) if kind == "call" else max(k - spot, 0.0)
+    T = years_to_expiry(e, now)
+    otm = "put" if k < spot else "call"
+    near = sorted((kk for (ee, kd, kk) in book if ee == e and kd == otm and (kk < spot) == (otm == "put")),
+                  key=lambda kk: abs(kk - k))
+    pts = []
+    for kk in near[:6]:
+        b, a = book[(e, otm, kk)]
+        r = implied_vol((b + a) / 2, spot, kk, T, RATE, 0.0, otm) if T > 0 and b > 0 else None
+        if r is not None and r.ok:
+            pts.append((kk, r.iv, a - b))
+        if len(pts) == 2:
+            break
+    if not pts:
+        return max(intrinsic - 0.10, 0.0), intrinsic + 0.10        # nothing usable nearby: intrinsic, $0.10 against us
+    iv = pts[0][1]
+    if len(pts) == 2 and pts[1][0] != pts[0][0]:
+        slope = (pts[0][1] - pts[1][1]) / (pts[0][0] - pts[1][0])
+        iv = min(max(iv + slope * (k - pts[0][0]), 0.5 * iv), 2.0 * iv)
+    mid = max(bs_price(spot, k, T, RATE, 0.0, iv, kind), intrinsic)
+    half = pts[0][2] / 2 + 0.05
+    return max(mid - half, 0.0), mid + half
+
+
 def multi_day_pair(start_day: date, later: dict[int, date], history_path: str) -> list[dict]:
     """Short/long iron fly opened on start_day and closed N trading days later, at executable prices."""
     from backtesting.data import load_day
@@ -348,18 +378,32 @@ def multi_day_pair(start_day: date, later: dict[int, date], history_path: str) -
             continue
         e, k = exps[0], round(spot)
         legs = {("call", k): -1, ("put", k): -1, ("call", k + WING): 1, ("put", k - WING): 1}
-        if not all((e, kind, kk) in b0 and (e, kind, kk) in b1 for (kind, kk) in legs):
+        if not all((e, kind, kk) in b0 for (kind, kk) in legs):
             continue
+        spot1 = d1.spot_at(tb)
+        missing = [(kind, kk) for (kind, kk) in legs if (e, kind, kk) not in b1]
+        if missing and spot1 is None:
+            continue
+        # A leg missing at the close is one SPY has moved far away from (outside the downloaded strike band).
+        # Dropping those trades would hide exactly the big-move losses, so the leg is priced instead.
+        b1 = dict(b1)
+        for kind, kk in missing:
+            b1[(e, kind, kk)] = _estimate_leg(b1, e, kind, kk, spot1, tb)
 
         def leg(bk, kind, kk, i):
             return bk[(e, kind, kk)][i]
+        # closing as one 4-leg order: never worth paying more than the wing width (+$0.20) to buy the fly back
+        close_cost = min(sum(leg(b1, kd, kk, 1) if q < 0 else -leg(b1, kd, kk, 0) for (kd, kk), q in legs.items()),
+                         WING + 0.20)
         short_pnl = (sum(leg(b0, kd, kk, 0) if q < 0 else -leg(b0, kd, kk, 1) for (kd, kk), q in legs.items())
-                     - sum(leg(b1, kd, kk, 1) if q < 0 else -leg(b1, kd, kk, 0) for (kd, kk), q in legs.items())) * 100 - 0.40
+                     - close_cost) * 100 - 0.40
         long_pnl = (sum(leg(b1, kd, kk, 0) if q < 0 else -leg(b1, kd, kk, 1) for (kd, kk), q in legs.items())
                     - sum(leg(b0, kd, kk, 1) if q < 0 else -leg(b0, kd, kk, 0) for (kd, kk), q in legs.items())) * 100 - 0.40
         wing_risk = WING * 100                                  # max loss is below the wing width for either fly
+        credit = sum(leg(b0, kd, kk, 0) if q < 0 else -leg(b0, kd, kk, 1) for (kd, kk), q in legs.items()) * 100
         out.append({"day": start_day, "wing": WING, "hold": name, "short_fly_exec": short_pnl, "long_fly_exec": long_pnl,
-                    "max_risk": wing_risk})
+                    "max_risk": wing_risk, "exit_day": d1.day, "spot_in": spot, "spot_out": spot1,
+                    "short_credit": credit, "exit_estimated": bool(missing)})
     return out
 
 
@@ -368,7 +412,9 @@ def run_multi_day(settings: Settings, days: list[date], workers: int | None = No
     idx = {d: i for i, d in enumerate(days)}
     jobs = []
     for d in days:
-        later = {n: days[idx[d] + n] for n in (1, 3, 5) if idx[d] + n < len(days)}
+        # N trading days later; a gap in the downloaded days (a skipped week) must not stretch the hold
+        later = {n: days[idx[d] + n] for n in (1, 3, 5)
+                 if idx[d] + n < len(days) and (days[idx[d] + n] - d).days <= n + 4}
         if later:
             jobs.append((d, later))
     rows = []
@@ -411,4 +457,58 @@ def multi_day_section(md: pd.DataFrame, cut: date) -> list[str]:
     L += ["", "**Positive after costs with t > 2 in both periods:** " + (", ".join(held) if held else "none") + "."]
     L += ["", "Holds of several days overlap (a 5-day hold starts every day), so their t-statistics overstate certainty "
           "somewhat. Short flies carry crash risk that a few months of data may not contain.", ""]
+    L += crash_test_section(md)
+    return L
+
+
+def sequential_runs(trades: pd.DataFrame) -> list[pd.DataFrame]:
+    """One position at a time: open, hold, close and reopen on the closing day. One chain per possible start."""
+    by_day = trades.set_index("day")
+    days = sorted(by_day.index)
+    chains = []
+    for first in days[:5]:
+        rows, d = [], first
+        while d is not None:
+            r = by_day.loc[d]
+            rows.append({"day": d, "exit_day": r["exit_day"], "pnl": r["short_fly_exec"]})
+            d = next((x for x in days if x >= r["exit_day"]), None)     # reopen on the closing day, or next one possible
+        chains.append(pd.DataFrame(rows))
+    return chains
+
+
+def crash_test_section(md: pd.DataFrame, wing: float = 20.0, hold: str = "5 days") -> list[str]:
+    """Worst trade, worst stretch and drawdown of the short fly that passed, with spring 2025 shown on its own."""
+    t = md[(md["wing"] == wing) & (md["hold"] == hold)].sort_values("day").reset_index(drop=True)
+    if t.empty or "exit_day" not in t:
+        return []
+    pnl = t["short_fly_exec"]
+    L = [f"### 4a. Crash test: ${wing:.0f}-wing short fly held {hold}", "",
+         f"{len(t)} trades from {t['day'].min()} to {t['day'].max()}; {int(t['exit_estimated'].sum())} closed with at "
+         "least one leg outside the downloaded strikes, priced from the nearest real quotes (see `_estimate_leg`). "
+         f"Most one fly can lose: about ${wing * 100:,.0f} minus the credit.", "",
+         f"* Mean ${pnl.mean():+.2f}, t {_t_stat(pnl):+.1f}, win rate {(pnl > 0).mean():.0%}, "
+         f"average credit ${t['short_credit'].mean():.0f}",
+         f"* Worst trade ${pnl.min():+,.2f}; worst 5 trades below", "",
+         "| Opened | Closed | SPY in | SPY out | Move | Credit $ | P&L $ | A leg estimated |",
+         "|---|---|---:|---:|---:|---:|---:|---|"]
+    for _, r in t.nsmallest(5, "short_fly_exec").iterrows():
+        mv = (r["spot_out"] / r["spot_in"] - 1) if r["spot_out"] else float("nan")
+        L.append(f"| {r['day']} | {r['exit_day']} | {r['spot_in']:.2f} | {r['spot_out'] or float('nan'):.2f} | {mv:+.1%} | "
+                 f"{r['short_credit']:.0f} | {r['short_fly_exec']:+,.2f} | {'yes' if r['exit_estimated'] else 'no'} |")
+    spring = t[(t["day"] >= date(2025, 3, 17)) & (t["day"] <= date(2025, 5, 16))]
+    if not spring.empty:
+        sp = spring["short_fly_exec"]
+        L += ["", f"**Spring 2025 (opened 2025-03-17 to 2025-05-16, includes the April tariff crash):** {len(sp)} trades, "
+              f"mean ${sp.mean():+.2f}, total ${sp.sum():+,.2f}, worst ${sp.min():+,.2f}, win rate {(sp > 0).mean():.0%}."]
+    L += ["", "One position at a time (close and reopen every ~5 trading days), one fly, five possible start days:", "",
+          "| Starts | Trades | Total $ | Worst trade $ | Max drawdown $ | Drawdown % of $100k | Losing trades |",
+          "|---|---:|---:|---:|---:|---:|---:|"]
+    for ch in sequential_runs(t):
+        if ch.empty:
+            continue
+        eq = ch["pnl"].cumsum()
+        dd = float((eq - eq.cummax().clip(lower=0)).min())
+        L.append(f"| {ch['day'].iloc[0]} | {len(ch)} | {ch['pnl'].sum():+,.0f} | {ch['pnl'].min():+,.0f} | {dd:,.0f} | "
+                 f"{dd / 100_000:.1%} | {(ch['pnl'] <= 0).sum()} |")
+    L += ["", "No stop loss is applied here: each trade is held the full period, so these are the unmanaged numbers.", ""]
     return L

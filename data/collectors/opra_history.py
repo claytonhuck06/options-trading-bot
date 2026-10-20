@@ -21,6 +21,7 @@ import pandas as pd
 
 from core.config import PROJECT_ROOT, DatabentoSettings
 from core.logging_setup import get_logger
+from data.collectors.historical import raw_factor
 from data.collectors.databento_guard import BudgetExceeded, GuardedDatabento
 
 log = get_logger("opra_history")
@@ -62,7 +63,7 @@ def previous_close(history: sqlite3.Connection, day: date) -> float | None:
     for ts, close in rows:
         t = datetime.fromisoformat(ts).astimezone(EASTERN)
         if t.date() < day and t.time() < time(16, 0):
-            return float(close)
+            return float(close) * raw_factor(history, t.date())       # real price, comparable with strikes
     return None
 
 

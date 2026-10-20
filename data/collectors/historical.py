@@ -11,6 +11,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from alpaca.data.enums import Adjustment, DataFeed
 from alpaca.data.historical import StockHistoricalDataClient
@@ -21,6 +22,7 @@ from core.logging_setup import get_logger
 from core.secrets import AlpacaCredentials
 
 log = get_logger("history")
+EASTERN = ZoneInfo("America/New_York")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS minute_bars (
@@ -29,6 +31,12 @@ CREATE TABLE IF NOT EXISTS minute_bars (
     open REAL, high REAL, low REAL, close REAL,
     volume REAL, vwap REAL,
     PRIMARY KEY (symbol, ts)
+);
+-- minute_bars are dividend-adjusted (smooth returns for stress tests). Option strikes are in real prices,
+-- so anything comparing SPY with strikes multiplies by this per-day factor: raw close / adjusted close.
+CREATE TABLE IF NOT EXISTS raw_factors (
+    symbol TEXT NOT NULL, day TEXT NOT NULL, factor REAL NOT NULL,
+    PRIMARY KEY (symbol, day)
 );
 CREATE TABLE IF NOT EXISTS fetched_months (
     symbol TEXT NOT NULL, month TEXT NOT NULL, bars INTEGER, fetched_at TEXT,
@@ -82,3 +90,32 @@ def download_minute_bars(creds: AlpacaCredentials, conn: sqlite3.Connection, sym
         total += len(bars)
         log.info("history %s %s: %d bars", symbol, key, len(bars))
     return total
+
+
+def download_raw_factors(creds: AlpacaCredentials, conn: sqlite3.Connection, symbol: str = "SPY",
+                         start: date = date(2016, 1, 1), end: date | None = None) -> int:
+    """Per-day raw/adjusted price ratio from daily bars fetched both ways (two requests; free feed)."""
+    client = StockHistoricalDataClient(creds.key_id, creds.secret_key)
+    end_dt = datetime.now(timezone.utc) - timedelta(minutes=16) if end is None else \
+        datetime(end.year, end.month, end.day, tzinfo=timezone.utc) + timedelta(days=1)
+    closes = {}
+    for adj in (Adjustment.RAW, Adjustment.ALL):
+        req = StockBarsRequest(symbol_or_symbols=symbol, timeframe=TimeFrame.Day, feed=DataFeed.SIP, adjustment=adj,
+                               start=datetime(start.year, start.month, start.day, tzinfo=timezone.utc), end=end_dt)
+        closes[adj] = {b.timestamp.astimezone(EASTERN).date().isoformat(): b.close
+                       for b in client.get_stock_bars(req).data.get(symbol, [])}
+    rows = [(symbol, d, closes[Adjustment.RAW][d] / c) for d, c in closes[Adjustment.ALL].items()
+            if c and d in closes[Adjustment.RAW]]
+    conn.executemany("INSERT OR REPLACE INTO raw_factors VALUES (?,?,?)", rows)
+    conn.commit()
+    log.info("raw price factors %s: %d days", symbol, len(rows))
+    return len(rows)
+
+
+def raw_factor(conn: sqlite3.Connection, day: date, symbol: str = "SPY") -> float:
+    """Multiply an adjusted price from `day` by this to get the real traded price (1.0 if unknown)."""
+    try:
+        row = conn.execute("SELECT factor FROM raw_factors WHERE symbol=? AND day=?", (symbol, day.isoformat())).fetchone()
+    except sqlite3.OperationalError:                  # table not created yet
+        return 1.0
+    return float(row[0]) if row else 1.0
