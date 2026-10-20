@@ -15,6 +15,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from typing import Callable
 
 from research import monthly_trend as mt
 from research.monthly_trend import MarketData, Result, Stats, first_of_month, month_ends, rate_lookup, signals, stats
@@ -63,14 +64,19 @@ def common_days(datas: dict[str, MarketData], end_before: date) -> list[date]:
     return sorted(set.intersection(*sets))
 
 
-def common_start(days: list[date], end_before: date) -> date:
-    """First trading day after the month-end on which every asset has WARMUP_MONTHS month-end closes."""
+def common_start(days: list[date], end_before: date, warmup: int = WARMUP_MONTHS) -> date:
+    """First trading day after the month-end on which every asset has `warmup` month-end closes."""
     ends = month_ends(days, end_before)
-    return days[days.index(ends[WARMUP_MONTHS - 1]) + 1]
+    return days[days.index(ends[warmup - 1]) + 1]
+
+
+# A rule maps a month-end to (score per asset, chosen per asset, target weight per asset), or None if it
+# can't be computed yet. The default is the 10-month trend rule; research/relative_momentum.py supplies its own.
+Rule = Callable[[date], tuple[dict[str, float | None], dict[str, bool], dict[str, float]] | None]
 
 
 def simulate(datas: dict[str, MarketData], n: int | None, cost: float, end_before: date,
-             start: date | None = None) -> Result:
+             start: date | None = None, rule: Rule | None = None) -> Result:
     syms = list(datas)
     days = common_days(datas, end_before)
     start = start or common_start(days, end_before)
@@ -81,13 +87,17 @@ def simulate(datas: dict[str, MarketData], n: int | None, cost: float, end_befor
     rate = rate_lookup(next(iter(datas.values())).rates)
     end_set = set(ends)
 
-    def targets(me: date) -> dict[str, float]:
-        return {s: (1 / len(syms) if sig[s][me][1] else 0.0) for s in syms}
+    def trend_rule(me: date):
+        if any(me not in sig[s] for s in syms):
+            return None
+        return ({s: sig[s][me][0] for s in syms}, {s: sig[s][me][1] for s in syms},
+                {s: (1 / len(syms) if sig[s][me][1] else 0.0) for s in syms})
 
+    rule = rule or trend_rule
     prior = [e for e in ends if e < start]
-    if not prior or any(prior[-1] not in sig[s] for s in syms):
-        raise ValueError(f"not enough history before {start} for a {n}-month average")
-    pending, pending_from = targets(prior[-1]), prior[-1]
+    if not prior or rule(prior[-1]) is None:
+        raise ValueError(f"not enough history before {start} for a {n}-month signal")
+    pending, pending_from = rule(prior[-1])[2], prior[-1]
     shares = {s: 0.0 for s in syms}
     cash, cash_idx, first = mt.EQUITY, 1.0, True
     res = Result({}, {}, [], [], {}, n, cost)
@@ -122,9 +132,8 @@ def simulate(datas: dict[str, MarketData], n: int | None, cost: float, end_befor
                 res.months.append(PMonth(**{**month_row.__dict__, "rebalance_day": d, "held_after": held}))
                 month_row = None
             elif not res.months:
-                res.months.append(PMonth(pending_from, {s: cls[s][pending_from] for s in syms},
-                                         {s: sig[s][pending_from][0] for s in syms},
-                                         {s: sig[s][pending_from][1] for s in syms}, d, held))
+                score, on, _ = rule(pending_from)
+                res.months.append(PMonth(pending_from, {s: cls[s][pending_from] for s in syms}, score, on, d, held))
             pending = None
         for s in syms:
             if div_cash[s]:
@@ -135,9 +144,9 @@ def simulate(datas: dict[str, MarketData], n: int | None, cost: float, end_befor
         res.cash_index[d] = cash_idx
 
         if d in end_set:
-            month_row = PMonth(d, {s: cls[s][d] for s in syms}, {s: sig[s][d][0] for s in syms},
-                               {s: sig[s][d][1] for s in syms}, None, None)
-            pending, pending_from = targets(d), d
+            score, on, weights = rule(d)
+            month_row = PMonth(d, {s: cls[s][d] for s in syms}, score, on, None, None)
+            pending, pending_from = weights, d
     if month_row is not None:
         res.months.append(month_row)
     return res
