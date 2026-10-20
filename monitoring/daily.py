@@ -26,6 +26,8 @@ REASON_WORDS = {
     "wide_leg_spread": "bid/ask too wide",
     "max_loss_not_positive": "quotes inconsistent",
     "too_good_to_be_true": "too good to be true (likely a bad quote)",
+    "inconsistent_with_parity": "call and put quotes disagree (likely a bad quote)",
+    "parity_unverifiable": "no matching call/put quotes to cross-check",
     "too_large_for_risk_budget": "too big for the risk budget",
     "reward_too_small": "reward too small",
     "no_edge_at_executable_prices": "no edge at real prices",
