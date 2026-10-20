@@ -8,6 +8,7 @@
 ![Tests](https://img.shields.io/badge/tests-296%20passing-2ea44f)
 ![Broker](https://img.shields.io/badge/broker-Alpaca%20paper%20only-F7B500)
 ![Live trading](https://img.shields.io/badge/live%20trading-disabled-lightgrey)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 </div>
 
@@ -186,4 +187,4 @@ Any of these work:
 
 ---
 
-<sub>Built by <a href="https://github.com/claytonhuck06">@claytonhuck06</a>. For research and education. Options involve substantial risk, and past or simulated results don't predict future returns.</sub>
+<sub>Built by <a href="https://github.com/claytonhuck06">@claytonhuck06</a>. For research and education. Options involve substantial risk, and past or simulated results don't predict future returns. Released under the <a href="LICENSE">MIT License</a>.</sub>
