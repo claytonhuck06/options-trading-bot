@@ -130,6 +130,36 @@ class VerticalSpread:
                 f"buy {self.long.strike:g}{kind} @ {self.long.price:.2f} / sell {self.short.strike:g}{kind} @ {self.short.price:.2f}")
 
 
+def box_gap(spread: VerticalSpread, result: PricingResult) -> float | None:
+    """Per share: how far the quotes put a riskless box in our favour, or None if it cannot be checked.
+
+    Our vertical plus the opposite-type vertical at the same two strikes (buy the
+    complement of the short leg, sell the complement of the long leg) is a box,
+    worth the discounted strike width whatever SPY does. Buying a box (a debit
+    vertical) for less than that, or selling one (a credit vertical) for more,
+    at executable prices is free money that real quotes do not offer: one of
+    the four quotes is wrong. The engine checks call/put parity only near the
+    money, so this is the parity check for in-the-money legs. Positive = impossible.
+    """
+    other = "put" if spread.option_type == "call" else "call"
+    by_key = {(c.option.expiration, c.option.option_type, c.option.strike): c for c in result.contracts}
+    comp_long = by_key.get((spread.expiration, other, spread.long.strike))
+    comp_short = by_key.get((spread.expiration, other, spread.short.strike))
+    rate = next((e.rate for e in result.expiries if e.expiration == spread.expiration), None)
+    if comp_long is None or comp_short is None or rate is None:
+        return None
+    pv_width = spread.width * math.exp(-rate * spread.long.contract.years)
+    box_cost = spread.net_premium + comp_short.option.ask - comp_long.option.bid
+    return pv_width - box_cost if spread.structure == "debit" else -box_cost - pv_width
+
+
+def early_exercise_allowance(spread: VerticalSpread, result: PricingResult) -> float:
+    """Per share: American early exercise lets a box drift from the European value by up to this much."""
+    strikes = {spread.long.strike, spread.short.strike}
+    return sum(c.early_exercise_premium for c in result.contracts
+               if c.option.expiration == spread.expiration and c.option.strike in strikes)
+
+
 def build_candidates(result: PricingResult, cfg: StrategySettings) -> list[VerticalSpread]:
     by_key = {(c.option.expiration, c.option.option_type, c.option.strike): c for c in result.contracts if c.reliable}
     seen, out = set(), []

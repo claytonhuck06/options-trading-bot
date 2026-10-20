@@ -26,7 +26,7 @@ from core.config import Settings
 from pricing.black_scholes import norm_cdf
 from pricing.engine import PricingResult
 from risk.limits import DailyRiskBudget, take_profit_target
-from strategies.spread_builder import MULTIPLIER, VerticalSpread, build_candidates
+from strategies.spread_builder import MULTIPLIER, VerticalSpread, box_gap, build_candidates, early_exercise_allowance
 
 EASTERN = ZoneInfo("America/New_York")
 TRADING_MINUTES_PER_YEAR = 252 * 390
@@ -136,6 +136,11 @@ def score(spread: VerticalSpread, result: PricingResult, settings: Settings, bud
         reasons.append("max_loss_not_positive")          # only possible if the quotes themselves allow arbitrage
     elif spread.max_loss < cfg.min_risk_fraction_of_width * spread.width:
         reasons.append("too_good_to_be_true")            # near-riskless payoff: a stale or glitched quote
+    gap = box_gap(spread, result)
+    if gap is None:
+        reasons.append("parity_unverifiable")            # no same-strike quotes of the other type to cross-check
+    elif gap > cfg.max_box_gap + early_exercise_allowance(spread, result):
+        reasons.append("inconsistent_with_parity")       # quotes imply a riskless box: at least one is wrong
     if max_loss > 0 and contracts < 1:
         reasons.append("too_large_for_risk_budget")
     if max_profit < cfg.min_max_profit:

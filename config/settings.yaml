@@ -64,7 +64,8 @@ strategy:
   max_leg_relative_spread: 0.10       # (ask-bid)/mid per leg
   min_max_profit: 5.00                # $ per contract; smaller rewards are not worth the execution risk
   min_risk_fraction_of_width: 0.05    # max loss below 5% of the strike width = quote glitch, not an opportunity
-  min_target_probability: 0.25        # chance of reaching the profit target within the holding period
+  max_box_gap: 0.05                   # $/share: trade + same-strike opposite-type vertical must not price a riskless box better than this
+  min_target_probability: 0.25       # chance of reaching the profit target within the holding period
   max_candidates_per_scan: 20
 
 execution:

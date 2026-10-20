@@ -90,6 +90,8 @@ def build_scan_report(settings: Settings, store: MarketDataStore, day: date, eve
         "too_large_for_risk_budget": "even one spread risks more than the per-trade limit",
         "reward_too_small": "maximum profit under $5 per spread",
         "too_good_to_be_true": "near-riskless payoff: a glitched or stale quote",
+        "inconsistent_with_parity": "with the same-strike opposite-type spread it forms a riskless box: a quote is wrong",
+        "parity_unverifiable": "no same-strike quotes of the other option type to cross-check against",
         "thin_quote": "fewer than 5 contracts shown on the side we would trade",
         "wide_leg_spread": "a leg's bid-ask is over 10% of its price",
         "stale_quote": "a leg's quote older than 30 seconds",

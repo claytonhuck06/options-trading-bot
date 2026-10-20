@@ -143,6 +143,7 @@ class StrategySettings(_Strict):
     max_leg_relative_spread: float = Field(gt=0, le=2)
     min_max_profit: float = Field(ge=0)
     min_risk_fraction_of_width: float = Field(ge=0, lt=1)
+    max_box_gap: float = Field(default=0.05, ge=0)
     min_target_probability: float = Field(ge=0, lt=1)
     max_candidates_per_scan: int = Field(ge=1, le=1000)
 
