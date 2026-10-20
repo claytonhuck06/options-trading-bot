@@ -301,3 +301,9 @@ test.
 - **Intraday stop estimate (D2):** for each held day, SPY's intraday high and low from the minute bars are applied
   to each leg with the previous snapshot's implied volatility (sticky strike). If the stop would have been hit, the
   exit is estimated at the stop level. Labelled "estimated".
+
+### Result note (2026-10-20): Phase 3 backtest — no-go
+
+`docs/research/condor_backtest_2026-10-20.md`: chosen setting 30 DTE · 0.20Δ · $5 · 50% target · no stop.
+Bars 1, 2, 3, 6 and 7 failed; 4 and 5 passed. Per section E, the result is **no-go** and nothing gets built for
+trading. Phase 5 (Databento, $20 cap) doesn't run.

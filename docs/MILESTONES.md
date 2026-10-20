@@ -216,7 +216,13 @@ The mispricing strategy above keeps running unchanged while the condor is resear
         realistic (2–3¢ on OTM puts). Locked legs are rejected, which costs trades but can't flatter results
       * Amendment 3 written before any P&L: how thin settings count in smoothing and bar 6
       * Straddle builder not built (forecast failed its bar in Phase 1b)
-- [ ] Phase 3: backtest · Phase 4: owner go/no-go
+- [x] Phase 3 (2026-10-20): backtest → **NO-GO, 5 of 7 bars failed.** Chosen (by the pre-set rule): 30 DTE ·
+      20Δ · $5 wings · 50% target · no stop. 207 trades 2016–2023, −$44/trade, total −$9,110 on $100k, t = −3.99;
+      lost in both discovery (−$58.58) and confirmation (−$19.41), and under every sensitivity check and surface
+      split. Every setting with 60+ discovery trades lost money. Drawdown (9.2%) and crash bars passed only because
+      size was small. Review: vendor strike gaps hit 66 trades but clean trades alone still lose (−$28.62, t = −2.73).
+      Report: docs/research/condor_backtest_2026-10-20.md
+- [ ] Phase 4: owner go/no-go (recommendation: no-go; nothing built for trading, no Databento spend)
 
 ## Phase 7 — Backtesting (requires suitable historical quote data)
 ## Phase 8 — Observation mode, then 60–90+ days of paper trading
