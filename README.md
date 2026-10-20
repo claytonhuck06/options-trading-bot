@@ -147,6 +147,8 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.optionsquant.collect
 
 The `.plist` files in `scripts/` contain absolute paths for the original machine; edit them to match your project folder before installing.
 
+**Moving to another Mac:** turn the six jobs off on the old Mac, copy the whole project folder (databases included), then run `zsh scripts/setup_new_mac.sh` on the new one. It rebuilds `.venv`, asks for any missing keys, checks the Alpaca paper connection and the tests, and installs the jobs with the new folder's paths.
+
 ### Daily paper trading
 
 A second job (`com.optionsquant.trader`) runs `scripts/run_trader.sh` at 8:20 a.m. Central on weekdays. It runs the morning check (unknown orders, overnight assignments, broker vs. local records, missed days), waits for the open, then trades until the close. It needs the collector running. On its first run it does the paper demo and only trades if that passes. Log: `logs/trader_<date>.log`.
