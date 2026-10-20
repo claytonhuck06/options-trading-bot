@@ -109,6 +109,8 @@ class ExpiryDeltas:
     put: dict[float, tuple[float | None, str]]     # strike -> (delta, source)
     call: dict[float, tuple[float | None, str]]
     fallbacks: int
+    put_iv: dict[float, float] = field(default_factory=dict)      # own mid IVs (solver successes only)
+    call_iv: dict[float, float] = field(default_factory=dict)
 
 
 def _mid(bid: float | None, ask: float | None) -> float | None:
@@ -127,18 +129,28 @@ def expiry_deltas(rows: list[ChainRow], spot: float, years: float, rate: float) 
     pairs = [(k, c, p) for k, c, p in pairs if c is not None and p is not None]
     fwd = implied_forward(pairs, spot, years, rate, FORWARD_PAIRS)
     q = fwd.implied_dividend_yield if fwd.implied_dividend_yield is not None else 0.0
-    put, call, fallbacks = {}, {}, 0
+    put, call, fallbacks, put_iv, call_iv = {}, {}, 0, {}, {}
     for r in rows:
-        for kind, bid, ask, vendor, out in (("put", r.p_bid, r.p_ask, r.p_delta, put),
-                                            ("call", r.c_bid, r.c_ask, r.c_delta, call)):
+        for kind, bid, ask, vendor, out, ivs in (("put", r.p_bid, r.p_ask, r.p_delta, put, put_iv),
+                                                 ("call", r.c_bid, r.c_ask, r.c_delta, call, call_iv)):
             mid = _mid(bid, ask)
             iv = implied_vol(mid, spot, r.strike, years, rate, q, kind) if mid else None
             if iv is not None and iv.ok:
+                ivs[r.strike] = iv.iv
                 out[r.strike] = (greeks(spot, r.strike, years, rate, q, iv.iv, kind).delta, "own")
             else:
                 out[r.strike] = (vendor, "vendor")
                 fallbacks += vendor is not None
-    return ExpiryDeltas(fwd.forward, q, put, call, fallbacks)
+    return ExpiryDeltas(fwd.forward, q, put, call, fallbacks, put_iv, call_iv)
+
+
+def skew_25d(ed: ExpiryDeltas) -> float | None:
+    """25-delta put IV minus 25-delta call IV (own IVs). Amendment 4, report only."""
+    p = nearest_delta({k: v for k, v in ed.put.items() if k in ed.put_iv and v[1] == "own"}, -0.25)
+    c = nearest_delta({k: v for k, v in ed.call.items() if k in ed.call_iv and v[1] == "own"}, 0.25)
+    if not p or not c:
+        return None
+    return ed.put_iv[p[0]] - ed.call_iv[c[0]]
 
 
 # --- Rules -------------------------------------------------------------------------------------
@@ -198,8 +210,10 @@ def build_condor(day: date, params: CondorParams, spot: float, chains: dict[date
                  rate: float, trading_days: list[date], event_days: set[date],
                  deltas_cache: dict | None = None) -> Decision:
     """Apply C1.3–C1.9 for one day. `chains`: expiry -> rows for that expiry on `day`."""
+    extra: dict = {}
+
     def no(code: str, reason: str, **details) -> Decision:
-        return Decision(day, params, None, reason, code, details)
+        return Decision(day, params, None, reason, code, {**extra, **details})
 
     expiries = {exp: (exp - day).days for exp in chains}
     exp = select_expiry(expiries, params.target_dte)
@@ -215,6 +229,8 @@ def build_condor(day: date, params: CondorParams, spot: float, chains: dict[date
         ed = expiry_deltas(rows, spot, years, rate)
         if deltas_cache is not None:
             deltas_cache[key] = ed
+    extra["skew_25d"] = skew_25d(ed)
+    extra["expiry"] = exp
     sp = nearest_delta(ed.put, -params.short_delta)
     sc = nearest_delta(ed.call, params.short_delta)
     if sp is None or sc is None:
@@ -248,4 +264,5 @@ def build_condor(day: date, params: CondorParams, spot: float, chains: dict[date
     if contracts < 1:
         return no("too_small", f"one condor risks ${max_loss:,.0f}, over the ${REFERENCE_EQUITY * RISK_PER_CONDOR_PCT:,.0f} limit")
     condor = Condor(day, exp, dte, short_put, long_put, short_call, long_call, params.width, credit, contracts)
-    return Decision(day, params, condor, "built", "built", {"fallback_deltas": ed.fallbacks})
+    return Decision(day, params, condor, "built", "built",
+                    {**extra, "fallback_deltas": ed.fallbacks, "dividend_yield": ed.dividend_yield})
