@@ -2,6 +2,9 @@
 
 Triggers and what they do:
   daily loss >= limit (incl. unrealised)        -> FLATTEN_TODAY
+      (the limit is raised by the planned max loss of open multi-day positions: their loss is already
+       capped by their defined risk and handled by their own stops, so a bad day for them alone does not
+       force everything closed; the normal limit still applies to every other loss on top)
   daily profit >= ceiling                       -> FLATTEN_TODAY
   drawdown from high-water mark >= warning      -> NO_NEW_ENTRIES until a person acknowledges it for the
                                                    day (needed again each day while below the line)
@@ -36,6 +39,7 @@ class HealthInputs:
     uncovered_shorts: list[str] = field(default_factory=list)
     risk_calc_ok: bool = True
     manual_stop: bool = False
+    planned_overnight_risk: float = 0.0    # $ max loss of open multi-day positions (owner-approved 3% pool)
 
 
 @dataclass(frozen=True)
@@ -50,7 +54,7 @@ def evaluate(inputs: HealthInputs, day: DaySnapshot, limits: RiskLimits, state: 
     hwm = max(state.update_high_water_mark(inputs.equity), day.high_water_mark)
     drawdown = 1 - inputs.equity / hwm if hwm > 0 else 0.0
 
-    if pnl <= -limits.daily_loss_limit_pct * day.start_equity:
+    if pnl <= -(limits.daily_loss_limit_pct * day.start_equity + inputs.planned_overnight_risk):
         triggers.append((Level.FLATTEN_TODAY, "daily_loss_limit"))
     if pnl >= limits.daily_profit_stop_pct * day.start_equity:
         triggers.append((Level.FLATTEN_TODAY, "daily_profit_ceiling"))

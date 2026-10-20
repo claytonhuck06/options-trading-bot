@@ -139,8 +139,11 @@ Requirement: orders placed, modified, cancelled, filled and reconciled correctly
   Only positions opened by a multi-day strategy may be held; every other position still closes the same day.
 - A multi-day trade may risk up to **3%** of start-of-day equity (`multiday.per_trade_risk_pct: 0.03`), from its own
   risk pool, one position at a time. Same-day trades keep their 0.5% / 2.5% limits.
-- Open question for the strategy backtest: the account-wide daily loss limit (1.5%) is smaller than one multi-day
-  trade's 3% max loss, so a large gap day can trigger "close everything for today". The backtest will show how often.
+- Daily loss limit vs. multi-day risk (settled 2026-10-19, owner delegated the call): while a multi-day position is
+  open, the account-wide daily loss trigger is 1.5% **plus that position's planned max loss**. Its loss is already
+  capped by its defined risk and handled by its own stop/gap-stop, so a bad day for it alone no longer forces
+  everything closed at the worst moment. Any other loss on top still trips the 1.5% limit, and the 10% drawdown
+  shutdown is unchanged. Worst planned single day: about 4.5% of equity.
 
 ## Multi-day readiness (built 2026-10-19; strategy itself waits for the April 2025 crash test)
 - [x] Separate multi-day risk pool in the risk engine (3% per trade, 1 open position); positions flagged `hold_overnight`

@@ -170,7 +170,8 @@ class TradingSession:
         risk_ok = waiting or not legs or (quote_age is not None and len(quotes) == len(legs))
         previous = self.state.level(today)
         ks = evaluate(HealthInputs(equity, 0 if waiting else len(positions), data_age, recon.ok, self.orders.consecutive_failures,
-                                   list(recon.unexpected_at_broker), recon.uncovered_shorts, risk_ok, STOP_FILE.exists()),
+                                   list(recon.unexpected_at_broker), recon.uncovered_shorts, risk_ok, STOP_FILE.exists(),
+                                   self._planned_overnight_risk(positions)),
                       day, self.s.risk, self.state, today)
         rep.level, rep.triggers = ks.level.name, ks.triggers
         if ks.level > previous:
@@ -224,6 +225,12 @@ class TradingSession:
             return rep
         rep.entry = self._open(best, run_id, result, equity, day, ks.level, positions, now)
         return rep
+
+    def _planned_overnight_risk(self, positions: list[Position]) -> float:
+        """Max loss of open multi-day positions; the daily loss trigger makes room for it (risk/kill_switch.py)."""
+        if not self.s.risk.allow_overnight_positions:
+            return 0.0
+        return sum(p.max_loss for p in positions if p.hold_overnight)
 
     # --- early assignment ------------------------------------------------------------------
     def _assignment_shares(self) -> int:

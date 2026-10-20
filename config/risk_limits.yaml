@@ -6,7 +6,7 @@ reference_equity: 20000.00            # hypothetical starting equity
 
 per_trade_risk_pct: 0.005             # 0.50% of start-of-day equity
 aggregate_planned_risk_pct: 0.025     # 2.50% across open trades
-daily_loss_limit_pct: 0.015           # 1.50% of start-of-day equity
+daily_loss_limit_pct: 0.015           # 1.50% of start-of-day equity, plus the planned max loss of any open multi-day position
 daily_profit_stop_pct: 0.05           # 5.00% ceiling, not a target
 drawdown_warning_pct: 0.05            # 5% below equity high-water mark
 drawdown_shutdown_pct: 0.10           # 10% below equity high-water mark

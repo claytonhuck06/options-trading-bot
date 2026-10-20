@@ -252,3 +252,29 @@ def test_startup_recognises_overnight_assignment(paper, monkeypatch, tmp_path, a
     assert rep.safe_to_resume
     assert s.state.level(NOW.date()) == Level.NORMAL
     assert s._assignment_shares() == 100
+
+
+def test_multi_day_position_gets_room_in_the_daily_loss_limit(paper, monkeypatch, tmp_path):
+    """A $2,000 drop with a multi-day position open does not force everything closed: that position's loss is
+    already capped by its defined risk and handled by its own stop. (Without one, the same drop does: see
+    test_overnight_gap_counts_against_todays_loss_limit.)"""
+    monkeypatch.setattr(trader_mod, "STOP_FILE", tmp_path / "STOP")
+    broker = SimulatedBroker(equity=98_000)
+    broker._last_equity = 100_000
+    s = make_session(paper, broker, NOW)
+    fly = iron_fly(n=20, opened=NOW - timedelta(days=1))
+    assert fly.max_loss > 500                       # 1.5% of $100k ($1,500) + this position's max loss > $2,000
+    hold(s, broker, fly)
+    rep = s.cycle()
+    assert "daily_loss_limit" not in rep.triggers and rep.level == "NORMAL"
+
+
+def test_daily_loss_beyond_the_multi_day_allowance_still_flattens(paper, monkeypatch, tmp_path):
+    monkeypatch.setattr(trader_mod, "STOP_FILE", tmp_path / "STOP")
+    fly = iron_fly(n=1, opened=NOW - timedelta(days=1))
+    broker = SimulatedBroker(equity=100_000 - 1_500 - fly.max_loss - 1)
+    broker._last_equity = 100_000
+    s = make_session(paper, broker, NOW)
+    hold(s, broker, fly)
+    rep = s.cycle()
+    assert "daily_loss_limit" in rep.triggers and rep.level == "FLATTEN_TODAY"
