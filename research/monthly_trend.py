@@ -23,7 +23,7 @@ import requests
 
 from pricing.rates import fetch_fred
 
-YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/SPY"
+YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 EQUITY = 100_000.0
 START = date(1994, 1, 1)                 # first trading day on/after this
 DISCOVERY = (date(1994, 1, 1), date(2012, 12, 31))
@@ -56,18 +56,19 @@ class MarketData:
 
 # --- Data ----------------------------------------------------------------------------------------
 
-def fetch_yahoo(timeout: float = 30.0) -> dict:
-    resp = requests.get(YAHOO_CHART, params={"period1": 0, "period2": int(datetime.now(timezone.utc).timestamp()),
+def fetch_yahoo(symbol: str = "SPY", timeout: float = 30.0) -> dict:
+    resp = requests.get(YAHOO_CHART.format(symbol=symbol), params={"period1": 0, "period2": int(datetime.now(timezone.utc).timestamp()),
                                              "interval": "1d", "events": "div,split"},
                         headers={"User-Agent": "Mozilla/5.0"}, timeout=timeout)
     resp.raise_for_status()
     return resp.json()
 
 
-def parse_yahoo(payload: dict) -> tuple[list[Bar], dict[date, float]]:
+def parse_yahoo(payload: dict, allow_splits: bool = False) -> tuple[list[Bar], dict[date, float]]:
+    """Yahoo's close is split-adjusted; SPY has never split, so the SPY test refuses any split."""
     res = payload["chart"]["result"][0]
-    if res.get("events", {}).get("splits"):
-        raise ValueError("SPY split in the data: the raw close would need adjusting")
+    if res.get("events", {}).get("splits") and not allow_splits:
+        raise ValueError("split in the data: check the close is split-adjusted before using it")
     q = res["indicators"]["quote"][0]
     bars = []
     for ts, o, c in zip(res["timestamp"], q["open"], q["close"]):
@@ -79,17 +80,26 @@ def parse_yahoo(payload: dict) -> tuple[list[Bar], dict[date, float]]:
     return bars, divs
 
 
-def load_data(cache_dir: Path) -> MarketData:
-    """Download once (Yahoo SPY daily + FRED DTB3) and reuse the saved copy on every later run."""
+def load_rates(cache_dir: Path) -> list[tuple[date, float]]:
     cache_dir.mkdir(parents=True, exist_ok=True)
-    spy_path, rate_path = cache_dir / "spy_daily_yahoo.json", cache_dir / "fred_dtb3.json"
-    if not spy_path.exists():
-        spy_path.write_text(json.dumps(fetch_yahoo()))
+    rate_path = cache_dir / "fred_dtb3.json"
     if not rate_path.exists():
         rate_path.write_text(json.dumps([(d.isoformat(), v) for d, v in fetch_fred("DTB3")]))
-    bars, divs = parse_yahoo(json.loads(spy_path.read_text()))
-    rates = [(date.fromisoformat(d), v) for d, v in json.loads(rate_path.read_text())]
-    return MarketData(bars, divs, rates)
+    return [(date.fromisoformat(d), v) for d, v in json.loads(rate_path.read_text())]
+
+
+def load_symbol(cache_dir: Path, symbol: str, allow_splits: bool = False) -> MarketData:
+    """Download once (Yahoo daily + FRED DTB3) and reuse the saved copy on every later run."""
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    path = cache_dir / f"{symbol.lower()}_daily_yahoo.json"
+    if not path.exists():
+        path.write_text(json.dumps(fetch_yahoo(symbol)))
+    bars, divs = parse_yahoo(json.loads(path.read_text()), allow_splits)
+    return MarketData(bars, divs, load_rates(cache_dir))
+
+
+def load_data(cache_dir: Path) -> MarketData:
+    return load_symbol(cache_dir, "SPY")
 
 
 def month_ends(days: list[date], before: date) -> list[date]:
