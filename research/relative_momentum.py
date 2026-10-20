@@ -139,7 +139,7 @@ def evaluate(main: Result, ew: Result, spy: Result, neighbours: dict[int, Result
 
 # --- Report --------------------------------------------------------------------------------------
 
-def _chart(series: list[tuple[Result, str, str]], start: date, path: Path) -> None:
+def _chart(series: list[tuple[Result, str, str]], start: date, path: Path, title: str | None = None) -> None:
     import math
 
     import matplotlib
@@ -159,7 +159,7 @@ def _chart(series: list[tuple[Result, str, str]], start: date, path: Path) -> No
     ax1.set_yscale("log")
     ax1.set_ylabel("Account value ($, log scale)")
     ax1.legend(loc="upper left")
-    ax1.set_title(f"Top 2 of 5 by 12-month return vs holding, $100k from {start:%b %Y} (0.05% per side)")
+    ax1.set_title(title or f"Top 2 of 5 by 12-month return vs holding, $100k from {start:%b %Y} (0.05% per side)")
     ax2.set_ylabel("Drawdown (%)")
     for ax in (ax1, ax2):
         ax.axvline(CONFIRMATION_START, color="#bbbbbb", ls="--", lw=0.8)
