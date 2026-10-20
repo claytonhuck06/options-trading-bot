@@ -957,7 +957,7 @@ def cmd_overnight_basket(settings, action: str) -> int:
         res = basket.buy(broker, now, prices, picks, full, level, ob.STOP_FILE.exists())
         print(res.summary(), flush=True)
         if not res.submitted:
-            if picks and full and "already bought today" not in res.summary():
+            if full and "already bought today" not in res.summary():     # incl. "no picks" each January
                 alerts.send("Overnight basket: not buying tonight", res.summary())
             return 0
         wait_until(time(16, 3))
