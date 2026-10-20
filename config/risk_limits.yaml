@@ -41,7 +41,7 @@ max_hedge_shares: 30
 # --- Kill switch ---------------------------------------------------------------
 max_quote_age_with_positions_seconds: 60   # market data older than this while holding positions = emergency
 max_consecutive_execution_failures: 3
-approval_valid_seconds: 30            # a risk approval expires; each order needs a fresh one
+approval_valid_seconds: 200           # a risk approval expires; covers 3 price attempts x 60 s each, then a fresh one is needed
 
 # --- Multi-day strategy (owner decisions 2026-10-19, paper trading) ---------------
 # Only positions opened by a multi-day strategy may be held overnight; every other

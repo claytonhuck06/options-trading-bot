@@ -84,7 +84,7 @@ weekly_spread:
 
 execution:
   require_manual_confirmation: false  # true = ask a person "send this order? (yes/no)" before every opening order
-  order_timeout_seconds: 20           # an unfilled order is cancelled after this long
+  order_timeout_seconds: 60           # an unfilled order is cancelled after this long (owner: 20 s was too short)
   max_reprice_attempts: 3             # cancel-and-resubmit steps toward the executable price
   entry_start_fraction: 0.5           # first limit sits halfway between mid and the executable price
   max_price_deterioration: 0.05       # $/share worse than the approved price: abort instead of chasing

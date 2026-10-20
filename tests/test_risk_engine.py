@@ -89,7 +89,7 @@ def test_approves_and_resizes_to_per_trade_limit(state):
     assert d.approved and 1 <= d.contracts < 50 and "resized" in d.reasons
     assert d.position.max_loss <= 0.015 * 20_000 + 1e-9
     assert d.position.profit_target == pytest.approx(0.2 * d.position.max_loss)
-    assert approval_is_valid(d, NOW) and not approval_is_valid(d, NOW + timedelta(seconds=31))
+    assert approval_is_valid(d, NOW) and not approval_is_valid(d, NOW + timedelta(seconds=S.risk.approval_valid_seconds + 1))
 
 
 def test_duplicate_request_refused(state):
