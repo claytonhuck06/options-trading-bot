@@ -180,7 +180,7 @@ def _max_dd(rets: np.ndarray) -> float:
     return float((1 - eq / np.maximum.accumulate(eq)).max()) if len(eq) else 0.0
 
 
-def score_window(panel: Panel, days: pd.DatetimeIndex) -> pd.DataFrame:
+def score_window(panel: Panel, days: pd.DatetimeIndex, min_dv: float = MIN_DOLLAR_VOL) -> pd.DataFrame:
     """Every statistic in section D for the given window of trading days, one row per stock."""
     on = panel.overnight.loc[days]
     dy = panel.day.loc[days]
@@ -203,7 +203,8 @@ def score_window(panel: Panel, days: pd.DatetimeIndex) -> pd.DataFrame:
     }, index=on.columns)
     out["leveraged"] = [is_leveraged(n_) for n_ in out["name"]]
     out["cost"] = [cost_for(v) if v == v else None for v in out["dollar_vol"]]
-    out["eligible"] = (out["coverage"] >= MIN_COVERAGE) & (out["price"] >= MIN_PRICE) & out["cost"].notna()
+    out["eligible"] = ((out["coverage"] >= MIN_COVERAGE) & (out["price"] >= MIN_PRICE) & out["cost"].notna()
+                       & (out["dollar_vol"] >= min_dv))
     out = out[out["eligible"]].copy()
     on, dy = on[out.index], dy[out.index]
 
@@ -255,6 +256,7 @@ class WalkForward:
     picks: dict[int, dict[int, list[str]]]   # n -> year -> symbols
     problems: list[str]
     extremes: list[tuple[str, str, float]]
+    shortfalls: list[str]                    # years where fewer names qualified than the basket size
 
 
 def _basket(on: pd.DataFrame, syms: list[str], costs: pd.Series, mult: float) -> pd.Series:
@@ -263,12 +265,13 @@ def _basket(on: pd.DataFrame, syms: list[str], costs: pd.Series, mult: float) ->
     return net.mean(axis=1) if syms else pd.Series(0.0, index=on.index)
 
 
-def walk_forward(panel: Panel, end: date, years=TEST_YEARS, ns=(TOP_N, *NEIGHBOUR_NS)) -> WalkForward:
+def walk_forward(panel: Panel, end: date, years=TEST_YEARS, ns=(TOP_N, *NEIGHBOUR_NS), min_dv: float = MIN_DOLLAR_VOL,
+                 shortfall_is_problem: bool = True) -> WalkForward:
     on_all = panel.overnight
     cal = on_all.index
     out: dict[str, list[pd.Series]] = {}
     picks: dict[int, dict[int, list[str]]] = {n: {} for n in ns}
-    problems, extremes = [], []
+    problems, extremes, shortfalls = [], [], []
     for y in years:
         hold = cal[(cal.year == y) & (cal <= pd.Timestamp(end))]
         if len(hold) == 0:
@@ -276,7 +279,7 @@ def walk_forward(panel: Panel, end: date, years=TEST_YEARS, ns=(TOP_N, *NEIGHBOU
         # Rank window: 3 prior calendar years, ending the day BEFORE the last close of y-1 (that close is
         # when the first buy happens, so its own day return isn't known yet).
         rank_days = cal[(cal.year >= y - 3) & (cal.year <= y - 1)][:-1]
-        scores = score_window(panel, rank_days)
+        scores = score_window(panel, rank_days, min_dv)
         costs = scores["cost"]
         if rank_days[-1] >= hold[0]:
             problems.append(f"{y}: ranking window reaches into the holding year")
@@ -285,7 +288,7 @@ def walk_forward(panel: Panel, end: date, years=TEST_YEARS, ns=(TOP_N, *NEIGHBOU
             syms = pick(scores, n)
             picks[n][y] = syms
             if len(syms) < n:
-                problems.append(f"{y}: only {len(syms)} stocks qualified for top {n}")
+                (problems if shortfall_is_problem else shortfalls).append(f"{y}: only {len(syms)} stocks qualified for top {n}")
             out.setdefault(f"top{n}", []).append(_basket(on, syms, costs, 1.0))
             if n == ns[0]:
                 out.setdefault(f"top{n}_2x", []).append(_basket(on, syms, costs, 2.0))
@@ -297,7 +300,7 @@ def walk_forward(panel: Panel, end: date, years=TEST_YEARS, ns=(TOP_N, *NEIGHBOU
         out.setdefault("no_selection", []).append(_basket(on, everyone, costs, 1.0))
         out.setdefault("spy_overnight", []).append(on["SPY"].fillna(0) - SPY_COST)
         out.setdefault("spy_hold", []).append((panel.close["SPY"].pct_change()).loc[hold].fillna(0))
-    return WalkForward({k: pd.concat(v) for k, v in out.items()}, picks, problems, extremes)
+    return WalkForward({k: pd.concat(v) for k, v in out.items()}, picks, problems, extremes, shortfalls)
 
 
 @dataclass
@@ -385,20 +388,29 @@ def _chart(wf: WalkForward, path: Path) -> None:
     plt.close(fig)
 
 
-def run(conn: sqlite3.Connection, out_dir: Path, today: date) -> tuple[Path, bool]:
+LIQUID_DV = 1e9                    # follow-up version: $1B+/day names only
+LIQUID_INFO_DV = 500e6             # information-only floor in that version
+
+
+def run(conn: sqlite3.Connection, out_dir: Path, today: date, liquid: bool = False) -> tuple[Path, bool]:
+    """liquid=False: the original screener + test. liquid=True: the $1B+/day follow-up
+    (docs/research/overnight_liquid_preregistration.md)."""
     end = date.fromisoformat(conn.execute("SELECT value FROM meta WHERE key='end'").fetchone()[0])
     panel = load_panel(conn, end)
     cal = panel.open.index
+    tag = "_liquid" if liquid else ""
+    min_dv = LIQUID_DV if liquid else MIN_DOLLAR_VOL
 
-    scores = score_window(panel, cal[-WINDOW:])
-    csv_path = out_dir / f"overnight_screener_{end}.csv"
+    scores = score_window(panel, cal[-WINDOW:], min_dv)
+    csv_path = out_dir / f"overnight_screener{tag}_{end}.csv"
     scores.to_csv(csv_path, index_label="symbol", float_format="%.6g")
 
-    wf = walk_forward(panel, end)
+    wf = walk_forward(panel, end, min_dv=min_dv, shortfall_is_problem=not liquid)
     verdict = evaluate(wf)
     st = {k: stats(v) for k, v in wf.baskets.items()}
-    _chart(wf, out_dir / "img" / "overnight_walk_forward.png")
-    picks_path = out_dir / "overnight_walk_forward_picks.csv"
+    chart_name = f"overnight_walk_forward{tag}.png"
+    _chart(wf, out_dir / "img" / chart_name)
+    picks_path = out_dir / f"overnight_walk_forward{tag}_picks.csv"
     with picks_path.open("w") as f:
         f.write("year,basket,rank,symbol\n")
         for n, by_year in wf.picks.items():
@@ -409,11 +421,22 @@ def run(conn: sqlite3.Connection, out_dir: Path, today: date) -> tuple[Path, boo
     spy = scores.loc["SPY"] if "SPY" in scores.index else None
     n_ranked = int(scores["ranked"].sum())
     years = sorted(st[f"top{TOP_N}"].yearly)
-    md = [f"# Overnight Drift Screener — {today}",
-          "",
-          "*Paper research only; not investment advice. Rules: "
-          "[overnight_screener_preregistration.md](overnight_screener_preregistration.md), committed before any data was fetched.*",
-          "",
+    if liquid:
+        md = [f"# Overnight Drift, Big Liquid Stocks Only ($1B+/day) — {today}",
+              "",
+              "*Paper research only; not investment advice. Rules: "
+              "[overnight_liquid_preregistration.md](overnight_liquid_preregistration.md), committed before this ran. "
+              "This is a follow-up on a pattern already seen in the first test "
+              f"([overnight_screener_{today}.md](overnight_screener_{today}.md)), so a pass is weaker evidence than "
+              "a pass on a fresh idea.*",
+              ""]
+    else:
+        md = [f"# Overnight Drift Screener — {today}",
+              "",
+              "*Paper research only; not investment advice. Rules: "
+              "[overnight_screener_preregistration.md](overnight_screener_preregistration.md), committed before any data was fetched.*",
+              ""]
+    md += [
           f"## Verdict: **{'GO' if verdict.go else 'NO-GO'}** ({sum(ok for _, ok, _ in verdict.bars)} of {len(verdict.bars)} bars passed)",
           "",
           "| Bar | Result | Detail |", "|---|---|---|"]
@@ -433,7 +456,16 @@ def run(conn: sqlite3.Connection, out_dir: Path, today: date) -> tuple[Path, boo
     for y in years:
         md.append(f"| {y} | " + " | ".join(f"{st[k].yearly.get(y, float('nan')):+.1%}" for k in
                                            (f"top{TOP_N}", f"top{TOP_N}_free", "no_selection", "spy_overnight", "spy_hold")) + " |")
-    md += ["", "![Walk-forward account values](img/overnight_walk_forward.png)", "",
+    if wf.shortfalls:
+        md += ["", "Years with fewer qualifying names than the basket size (allowed in this version): "
+               + "; ".join(wf.shortfalls) + "."]
+    if liquid:
+        info = walk_forward(panel, end, min_dv=LIQUID_INFO_DV, shortfall_is_problem=False)
+        ist = {k: stats(v) for k, v in info.baskets.items()}
+        md += ["", f"**Information only: the same test with a ${LIQUID_INFO_DV / 1e6:.0f}M floor** (cannot change the verdict)", "",
+               "| | Total return | Annual (CAGR) | Worst drop | Sharpe | Nights up |", "|---|---|---|---|---|---|"]
+        md += [_stats_row(LABELS[k], ist[k]) for k in (f"top{TOP_N}", f"top{TOP_N}_2x", f"top{TOP_N}_free", "no_selection")]
+    md += ["", f"![Walk-forward account values](img/{chart_name})", "",
            "**What the basket held each year** (top 20, in rank order):", ""]
     md += [f"- **{y}:** {', '.join(wf.picks[TOP_N][y])}" for y in sorted(wf.picks[TOP_N])]
     if wf.extremes:
@@ -463,6 +495,6 @@ def run(conn: sqlite3.Connection, out_dir: Path, today: date) -> tuple[Path, boo
            "- Prices are the daily bar's open and close, taken as the auction prices.",
            "- Taxes are ignored; every trade would be short-term.",
            ""]
-    path = out_dir / f"overnight_screener_{today}.md"
+    path = out_dir / f"overnight_screener{tag}_{today}.md"
     path.write_text("\n".join(md))
     return path, verdict.go

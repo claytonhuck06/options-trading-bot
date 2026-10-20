@@ -111,9 +111,9 @@ def test_walk_forward_rank_window_excludes_holding_year(monkeypatch):
     seen = []
     real = ov.score_window
 
-    def spy(panel, days):
+    def spy(panel, days, *rest):
         seen.append(days)
-        return real(panel, days)
+        return real(panel, days, *rest)
     monkeypatch.setattr(ov, "score_window", spy)
     ov.walk_forward(p, p.open.index[-1].date(), years=(2019, 2020), ns=(2,))
     for days, y in zip(seen, (2019, 2020)):
@@ -147,3 +147,18 @@ def test_stats_and_verdict_shape():
 def test_last_completed_day():
     assert ov.last_completed_day(datetime(2026, 10, 20, 18, 0, tzinfo=timezone.utc)) == date(2026, 10, 19)  # 14:00 ET
     assert ov.last_completed_day(datetime(2026, 10, 20, 21, 0, tzinfo=timezone.utc)) == date(2026, 10, 20)  # 17:00 ET
+
+
+def test_liquidity_floor_restricts_universe():
+    p = make_panel()
+    p.volume.loc[:, "A"] = 1e9                                   # A: tens of $B a day; the rest ~$100M
+    s = ov.score_window(p, p.open.index[-ov.WINDOW:], min_dv=1e9)
+    assert list(s.index) == ["A"] and s.loc["A", "cost"] == 0.0002
+
+
+def test_shortfall_reported_separately_when_allowed():
+    p = make_panel(n_days=1400)
+    wf = ov.walk_forward(p, p.open.index[-1].date(), years=(2019,), ns=(2, 10), shortfall_is_problem=False)
+    assert not wf.problems and any("top 10" in m for m in wf.shortfalls)
+    wf = ov.walk_forward(p, p.open.index[-1].date(), years=(2019,), ns=(2, 10))
+    assert any("top 10" in m for m in wf.problems)
