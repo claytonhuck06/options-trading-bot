@@ -194,7 +194,12 @@ The mispricing strategy above keeps running unchanged while the condor is resear
       one-day jumps (VIX9D 2018-02-05, 2024-12-18) are real market events. FOMC 2015–2027 from federalreserve.gov
       (8 scheduled/yr; 2020 also 2 unscheduled + cancelled March meeting). CPI release dates 2015–2026 from BLS,
       all 140 confirmed in FRED/ALFRED (Oct 2025 CPI never published). Report: docs/research/vol_data_report_2026-10-20.md
-- [ ] Phase 1 (rest): SPY end-of-day option chains — free OptionsDX files 2010–2023 need the owner's free checkout
+- [x] Phase 1 (2026-10-20): OptionsDX SPY end-of-day chains 2010–2023 (owner downloaded, free), 168 monthly files,
+      3,508 quote days, all at 16:00 ET. Checks: the file's SPY price matches our own close (median gap 0.006%; 2 days
+      >0.5%); 13 trading days missing; 10 holiday days with stale quotes (ignored); crossed quotes 0.2–0.4%, missing
+      bid/ask 0.09%. Since 2016 an expiry within ±7 days of 30 / 45 / 60 DTE exists on 100% / 97% / 64% of days
+      (60-day expiries are often monthly-only). Confirmation period with this data = 2022–2023; 2024–2026 needs the
+      Phase 5 Databento top-up. Raw files kept in data/storage/optionsdx_raw/ (git-ignored)
 - [x] Phase 1b (2026-10-20): volatility forecast — **model bar FAILED.** On 2018–2021 forecasts (fitted monthly on
       past data only), the full HAR-RV+VIX model scored the same as VIX alone (QLIKE 0.882 vs 0.881, DM p = 0.54).
       VIX already contains what recent movement, down days and FOMC/CPI dates tell you. Per the pre-registration the

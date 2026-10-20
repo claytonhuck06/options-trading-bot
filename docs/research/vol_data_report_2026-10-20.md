@@ -36,5 +36,24 @@ Expected: 8 scheduled FOMC meetings a year (2020: 7 plus the cancelled March mee
 
 ## SPY end-of-day option chains (OptionsDX)
 
-**Not loaded yet.** The free files need a free checkout on optionsdx.com, which the owner does by hand. Then: `python main.py vol-data load --path <folder>` and re-run this report.
+- Coverage: **2010-01-04 to 2023-12-29**, 3,508 quote days from 168 files, 4,136,645 strike rows (kept: ≤ 100 DTE, strikes within ±25% of SPY).
+- SPY trading days in that range with no chain: **13** (2016-04-18, 2017-09-27, 2019-03-01, 2019-05-24, 2019-06-07, 2019-09-30, 2020-06-18, 2020-11-27, 2020-12-24, 2022-05-11…)
+- Quote days that were **not** SPY trading days (market holidays, stale repeated quotes): 10 (2018-12-05, 2022-01-17, 2022-02-21, 2022-04-15, 2022-05-30, 2022-06-20, 2022-07-04, 2022-09-05, 2022-11-24, 2022-12-26). The backtest uses SPY trading days only, so these are ignored.
+- Snapshot time (hours, ET) by number of days: 16.0: 3,508
+- SPY price in the files vs SPY's real 4:00 pm close (our minute history), 1,999 days: median gap 0.006%, 99th percentile 0.079%, days off by more than 0.5%: 2 (2018-12-24, 2020-03-24)
+
+| Check | Calls | Puts |
+|---|---|---|
+| Missing bid or ask | 0.09% | 0.09% |
+| Crossed (bid > ask) | 0.22% | 0.43% |
+| Locked (bid = ask) | 2.10% | 3.47% |
+| Missing delta | 0.02% | 0.02% |
+| Missing or zero IV | 6.08% | 8.93% |
+
+| Target DTE | Days with an expiry within ±7 days | Days where the chain reaches a 10-delta put and call |
+|---|---|---|
+| 14 | 3,321 of 3,508 | 3,298 of 3,508 |
+| 30 | 3,233 of 3,508 | 3,217 of 3,508 |
+| 45 | 3,051 of 3,508 | 3,017 of 3,508 |
+| 60 | 2,235 of 3,508 | 2,217 of 3,508 |
 

@@ -60,7 +60,34 @@ def _events_section(vol: sqlite3.Connection) -> list[str]:
     return out
 
 
-def _chain_section(vol: sqlite3.Connection, spy_days: set[str]) -> list[str]:
+def _underlying_check(vol: sqlite3.Connection, history: sqlite3.Connection) -> list[str]:
+    """Vendor UNDERLYING_LAST vs SPY's real (unadjusted) close from our own minute history."""
+    from datetime import date as _date
+
+    from data.collectors.historical import raw_factor
+    import pandas as pd
+
+    vendor = dict(vol.execute("SELECT quote_date, MAX(underlying) FROM eod_chain GROUP BY quote_date"))
+    bars = pd.read_sql_query("SELECT ts, close FROM minute_bars WHERE symbol='SPY' AND ts>='2016-01-01'", history)
+    et = pd.to_datetime(bars["ts"], utc=True).dt.tz_convert("America/New_York")
+    bars = bars[(et.dt.hour * 60 + et.dt.minute) < 16 * 60].assign(day=et.dt.date.astype(str))
+    closes = bars.groupby("day")["close"].last()
+    diffs = []
+    for day, adj in closes.items():
+        if day in vendor:
+            real = adj * raw_factor(history, _date.fromisoformat(day))
+            diffs.append((abs(vendor[day] / real - 1), day))
+    if not diffs:
+        return []
+    diffs.sort()
+    vals = [d for d, _ in diffs]
+    big = [day for d, day in diffs if d > 0.005]
+    return [f"- SPY price in the files vs SPY's real 4:00 pm close (our minute history), {len(vals):,} days: median gap "
+            f"{100 * vals[len(vals) // 2]:.3f}%, 99th percentile {100 * vals[int(len(vals) * 0.99)]:.3f}%, "
+            f"days off by more than 0.5%: {len(big)}" + (f" ({', '.join(sorted(big)[:8])}{'…' if len(big) > 8 else ''})" if big else "")]
+
+
+def _chain_section(vol: sqlite3.Connection, spy_days: set[str], history: sqlite3.Connection | None = None) -> list[str]:
     out = ["## SPY end-of-day option chains (OptionsDX)", ""]
     n_files = vol.execute("SELECT COUNT(*) FROM loaded_files").fetchone()[0]
     if not n_files:
@@ -71,6 +98,8 @@ def _chain_section(vol: sqlite3.Connection, spy_days: set[str]) -> list[str]:
     in_range = sorted(d for d in spy_days if first <= d <= last)
     have = {r[0] for r in vol.execute("SELECT DISTINCT quote_date FROM eod_chain")}
     missing = [d for d in in_range if d not in have]
+    first_spy = min(spy_days) if spy_days else first
+    not_trading = sorted(d for d in have if d >= first_spy and d <= max(spy_days, default=last) and d not in spy_days)
     total, = vol.execute("SELECT COUNT(*) FROM eod_chain").fetchone()
     bad = vol.execute("""SELECT
         SUM(c_bid IS NULL OR c_ask IS NULL), SUM(p_bid IS NULL OR p_ask IS NULL),
@@ -84,8 +113,10 @@ def _chain_section(vol: sqlite3.Connection, spy_days: set[str]) -> list[str]:
             f"(kept: ≤ 100 DTE, strikes within ±25% of SPY).",
             f"- SPY trading days in that range with no chain: **{len(missing)}**"
             + (f" ({', '.join(missing[:10])}{'…' if len(missing) > 10 else ''})" if missing else ""),
+            f"- Quote days that were **not** SPY trading days (market holidays, stale repeated quotes): {len(not_trading)}"
+            + (f" ({', '.join(not_trading)})" if not_trading else "") + ". The backtest uses SPY trading days only, so these are ignored.",
             f"- Snapshot time (hours, ET) by number of days: "
-            + ", ".join(f"{t}: {n:,}" for t, n in times), "",
+            + ", ".join(f"{t}: {n:,}" for t, n in times)] + (_underlying_check(vol, history) if history else []) + ["",
             "| Check | Calls | Puts |", "|---|---|---|",
             f"| Missing bid or ask | {pct[0]} | {pct[1]} |",
             f"| Crossed (bid > ask) | {pct[2]} | {pct[3]} |",
@@ -117,7 +148,7 @@ def build_report(vol: sqlite3.Connection, history: sqlite3.Connection, today: da
              "Coverage and data checks only. No trade results are computed in Phase 1, so nothing here can "
              "influence the pre-registered rules.", "",
              f"SPY trading days in the stored minute history since 2016: **{len(spy_days):,}**.", ""]
-    lines += _index_section(vol, spy_days) + _events_section(vol) + _chain_section(vol, spy_days)
+    lines += _index_section(vol, spy_days) + _events_section(vol) + _chain_section(vol, spy_days, history)
     return "\n".join(lines) + "\n"
 
 

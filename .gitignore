@@ -27,3 +27,6 @@ data/storage/live_archive/
 
 # Single-instance lock files (live only while a job runs)
 data/storage/locks/
+
+# OptionsDX end-of-day files (owner-downloaded; loaded into vol_history.db)
+data/storage/optionsdx_raw/
