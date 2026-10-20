@@ -87,7 +87,7 @@ def test_only_the_guard_makes_billable_calls():
     offenders = []
     for path in ROOT.rglob("*.py"):
         rel = path.relative_to(ROOT)
-        if rel.parts[0] in (".venv", "tests") or rel == Path("data/collectors/databento_guard.py"):
+        if rel.parts[0] in (".venv", "tests", ".claude") or rel == Path("data/collectors/databento_guard.py"):
             continue
         text = path.read_text()
         if "timeseries.get_range" in text or "db.Historical(" in text or "databento.Historical(" in text:

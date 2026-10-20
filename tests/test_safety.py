@@ -23,7 +23,7 @@ CLIENT_OWNERS = {Path("execution/alpaca_paper.py"), Path("execution/broker.py")}
 def project_files():
     for path in ROOT.rglob("*.py"):
         rel = path.relative_to(ROOT)
-        if rel.parts[0] not in (".venv", "tests"):
+        if rel.parts[0] not in (".venv", "tests", ".claude"):        # .claude: side-session worktree copies
             yield rel, path.read_text()
 
 
