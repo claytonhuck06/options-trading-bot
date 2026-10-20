@@ -231,7 +231,12 @@ The mispricing strategy above keeps running unchanged while the condor is resear
       → **NO-GO, 6 of 7 bars passed.** Full period: drawdown 24% vs 55%, Sharpe 0.68 vs 0.61, 9.5% vs 10.9% a year.
       Failed the later check (2013–2026): 9.4% vs 14.9% a year, Sharpe 0.71 vs 0.93. The edge came almost entirely
       from sitting out 2000–02 and 2008–09. Report: docs/research/monthly_trend_backtest_2026-10-20.md
-- [ ] Owner decision: paper-trade anyway, try the same rule on several asset classes (Faber), or drop it
+- [x] Owner chose: test the same rule on several asset classes (Faber)
+- [x] Multi-asset version (SPY, EFA, IEF, VNQ, DBC; 20% each when above its 10-month average, else cash), 2007-02 to
+      2026-09: **NO-GO, 7 of 8 bars passed.** Beat holding the same five (drawdown 12% vs 47%, Sharpe 0.54 vs 0.41,
+      and also in 2013–2026) but failed vs SPY: 4.9% vs 10.9% a year, Sharpe 0.54 vs 0.65.
+      Report: docs/research/multi_asset_trend_backtest_2026-10-20.md
+- [ ] Owner decision: drop, or paper-trade the five-asset version anyway as a low-drawdown portfolio
 
 ## Current strategy: two-year backtest (2026-10-20)
 - [x] Relative-value spreads, live rules unchanged (before the deep-ITM fix), on 504 days of real Databento quotes
