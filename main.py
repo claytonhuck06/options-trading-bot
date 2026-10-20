@@ -23,6 +23,12 @@ Commands:
     python main.py opra-widen --from D --to D --band 0.06 --run-budget 20
                                             Add further-out strikes to already-downloaded days (budget-capped).
     python main.py vol-study                Intraday volatility-pattern study on the downloaded quote history.
+    python main.py backtest --from D --to D Backtest on downloaded real quotes; standard report in docs/research/.
+        --walk-forward TRAIN,TEST           Walk-forward test (window sizes in trading days).
+        --grid strategy.KEY=V1,V2,...        Candidate settings the walk-forward chooses between.
+    python main.py after-close              Daily summary pushed to the phone, then storage cleanup (scheduled).
+    python main.py storage status|cleanup|restore [--date D]   Live-data storage: sizes, cleanup now, restore a day.
+    python main.py notify --title T --message M [--priority urgent]   Send a phone alert (used by the scripts).
 
 Phase 1 cannot submit orders: there is no order-submission code in the project.
 """
@@ -232,11 +238,29 @@ def cmd_trade(settings, log) -> int:
 
     from execution.broker import ReadOnlyBroker
 
+    from datetime import datetime, timedelta
+
+    from monitoring import alerts
+    from monitoring.daily import missed_days
+    from research.pricing_report import EASTERN
+
     session, store = _paper_session(settings)
     clock = ReadOnlyBroker(settings, load_alpaca_credentials(settings))
     try:
         rep = session.startup()
-        print(f"Startup: {rep.recon.summary()}")
+        print(f"Morning check: {rep.recon.summary()}; carried into the day: {', '.join(rep.carried) or 'nothing'}")
+        today = datetime.now(EASTERN).date()
+        missed = [d for d in missed_days(store.conn, clock.trading_days(today - timedelta(days=7), today - timedelta(days=1)))]
+        if missed:
+            alerts.urgent("Bot missed trading days", "No market data was collected on " + ", ".join(f"{d:%a %b %d}" for d in missed)
+                          + ". The Mac was probably asleep or off. Today is running normally.")
+        # The daily schedule starts the trader before the open so this check happens first; wait for the bell.
+        while not (c := clock.market_clock())["is_open"]:
+            next_open = datetime.fromisoformat(c["next_open"]).astimezone(EASTERN)
+            if next_open.date() != today:
+                print("Market closed today — nothing to do.")
+                return 0
+            _t.sleep(min(max((next_open - datetime.now(EASTERN)).total_seconds(), 1), 60))
         while clock.market_clock()["is_open"]:
             r = session.cycle()
             line = f"{r.at:%H:%M:%S} {r.level}"
@@ -520,13 +544,148 @@ def cmd_report(settings, log, day_text: str | None, every: int) -> int:
     return 0
 
 
+def cmd_notify(settings, title: str | None, message: str | None, priority: str) -> int:
+    from monitoring import alerts
+
+    if not alerts.configured():
+        print("No ntfy topic configured (OPTIONS_QUANT_NTFY_TOPIC in .env).")
+        return 1
+    ok = alerts.send(title or "Options bot", message or "(no message)", priority)
+    print("Alert sent." if ok else "Alert could not be sent (saved to logs/alerts_unsent.jsonl).")
+    return 0 if ok else 1
+
+
+def cmd_after_close(settings) -> int:
+    """Daily summary to the phone, then storage cleanup. Read-only towards the broker."""
+    from datetime import datetime, timedelta
+
+    from core.config import PROJECT_ROOT
+    from data.storage.db import MarketDataStore
+    from data.storage.retention import run_retention
+    from execution.broker import ReadOnlyBroker
+    from monitoring import alerts
+    from monitoring.daily import build_summary
+    from research.pricing_report import EASTERN
+
+    today = datetime.now(EASTERN).date()
+    equity, days = None, []
+    try:
+        broker = ReadOnlyBroker(settings, load_alpaca_credentials(settings))
+        equity = broker.account_summary().equity
+        days = broker.trading_days(today - timedelta(days=7), today)
+    except Exception as exc:                       # still report what we know from the local records
+        print(f"Broker not reachable ({type(exc).__name__}); summary uses local records only.")
+    # A run that fires before today's close (the Mac was asleep at 15:20 and woke later) reports the last full day.
+    if datetime.now(EASTERN).hour < 16 and days:
+        earlier = [d for d in days if d < today]
+        today = earlier[-1] if earlier else today
+        equity = None                               # today's equity would not belong to that day
+    is_trading_day = today in days if days else today.weekday() < 5
+    store = MarketDataStore(PROJECT_ROOT / settings.storage.sqlite_path)
+    try:
+        s = build_summary(store.conn, today, equity, [d for d in days if d <= today], is_trading_day)
+    finally:
+        store.close()
+    print(s.title)
+    print(s.text())
+    if settings.alerts.daily_summary and (is_trading_day or s.problems):
+        alerts.send(s.title, s.text(), "high" if s.problems else "default", ["warning"] if s.problems else ["chart_with_upwards_trend"])
+    rep = run_retention(settings)
+    print(f"Storage: {rep.summary()}")
+    return 0
+
+
+def cmd_storage(settings, action: str, day: str | None) -> int:
+    import sqlite3
+    import shutil
+
+    from core.config import PROJECT_ROOT
+    from data.storage.retention import data_days, restore_day, run_retention
+
+    path = PROJECT_ROOT / settings.storage.sqlite_path
+    archive = PROJECT_ROOT / settings.storage.archive_path
+    if action == "cleanup":
+        print(run_retention(settings).summary())
+        return 0
+    if action == "restore":
+        if not day:
+            print("restore needs --date YYYY-MM-DD")
+            return 2
+        conn = sqlite3.connect(path)
+        try:
+            print(f"Restored {restore_day(conn, day, archive):,} rows for {day}.")
+        finally:
+            conn.close()
+        return 0
+    conn = sqlite3.connect(path)
+    try:
+        days = data_days(conn)
+    finally:
+        conn.close()
+    archived = sorted(p.name for p in archive.glob("*")) if archive.is_dir() else []
+    arch_mb = sum(f.stat().st_size for f in archive.rglob("*.parquet")) / 1e6 if archive.is_dir() else 0
+    print(f"Live database: {path.stat().st_size / 1e6:,.0f} MB, {len(days)} trading days "
+          f"(newest {settings.storage.keep_full_days} at full detail, then one quote per minute)")
+    print(f"Archive: {len(archived)} days, {arch_mb:,.0f} MB in {settings.storage.archive_path}")
+    print(f"Free disk: {shutil.disk_usage(path.parent).free / 1e9:,.0f} GB")
+    return 0
+
+
+def cmd_backtest(settings, start: str | None, end: str | None, walk: str | None, grid: list[str], equity0: float) -> int:
+    from datetime import date
+
+    from backtesting.data import available_days
+    from backtesting.engine import Backtest
+    from backtesting.metrics import from_result, table
+    from backtesting.walk_forward import report_lines, walk_forward
+    from core.config import PROJECT_ROOT
+    from risk.stress import load as load_stress
+
+    days = [d for d in available_days() if (not start or d >= date.fromisoformat(start)) and (not end or d <= date.fromisoformat(end))]
+    if not days:
+        print("No downloaded quote days in that range.")
+        return 1
+    candidates = [{}]
+    for spec in grid:                              # strategy.KEY=V1,V2  -> one candidate per combination
+        key, _, values = spec.partition("=")
+        section, _, field = key.partition(".")
+        if section != "strategy" or not field or not values:
+            print(f"--grid must look like strategy.min_edge_z=1.5,2,2.5 (got {spec!r})")
+            return 2
+        candidates = [{**c, field: float(v)} for c in candidates for v in values.split(",")]
+    stress = load_stress(PROJECT_ROOT / "config" / "stress_calibration.json")
+
+    def run(params, ds):
+        s = settings.model_copy(update={"strategy": settings.strategy.model_copy(update=params)}) if params else settings
+        return Backtest(s, stress).run(ds, equity0)
+
+    L = [f"# Backtest — {days[0]} to {days[-1]}", "",
+         f"Strategy: relative-value spreads (current rules). Real SPY option bid/ask (Databento), fills at the next "
+         f"minute's executable prices plus fees, no look-ahead. Starting equity ${equity0:,.0f}.", ""]
+    if walk:
+        train, test = (int(x) for x in walk.split(","))
+        wf = walk_forward(days, candidates, run, train, test, equity0=equity0)
+        L += report_lines(wf)
+    else:
+        res = run(candidates[0], days)
+        L += ["## Standard report", ""] + table(from_result(res, equity0))
+        if res.refusals:
+            L += ["", "Risk-engine refusals: " + ", ".join(f"{k} {v}" for k, v in sorted(res.refusals.items(), key=lambda x: -x[1]))]
+    path = PROJECT_ROOT / "docs" / "research" / f"backtest_{days[0]}_{days[-1]}.md"
+    path.write_text("\n".join(L) + "\n")
+    print("\n".join(L))
+    print(f"\nReport written: {path.relative_to(PROJECT_ROOT)}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="options-quant")
-    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study", "opra-widen"], nargs="?", default="config")
+    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study", "opra-widen", "backtest", "after-close", "storage", "notify"], nargs="?", default="config")
     parser.add_argument("--env", help="development | backtest | observation | paper | live")
     parser.add_argument("--once", action="store_true", help="collect: run a single cycle")
     parser.add_argument("--cycles", type=int, help="collect: stop after N cycles")
-    parser.add_argument("action", nargs="?", default="status", help="killswitch: status | stop | ack-warning | reset")
+    parser.add_argument("action", nargs="?", default="status",
+                        help="killswitch: status | stop | ack-warning | reset; storage: status | cleanup | restore")
     parser.add_argument("--authorization", help="killswitch reset: the exact authorization phrase")
     parser.add_argument("--from", dest="date_from", help="opra-widen: first day YYYY-MM-DD")
     parser.add_argument("--to", dest="date_to", help="opra-widen: last day YYYY-MM-DD")
@@ -538,6 +697,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--every", type=int, help="report / scan-report: minutes between snapshots (default 5 / 1)")
     parser.add_argument("--as-of", help="price: snapshot time, ISO with timezone")
     parser.add_argument("--wait-for-open", action="store_true", help="collect: wait for the market to open")
+    parser.add_argument("--walk-forward", help="backtest: TRAIN,TEST window sizes in trading days")
+    parser.add_argument("--grid", action="append", default=[], help="backtest: strategy.KEY=V1,V2 candidate settings")
+    parser.add_argument("--equity", type=float, default=100_000.0, help="backtest: starting equity")
+    parser.add_argument("--title", help="notify: alert title")
+    parser.add_argument("--message", help="notify: alert text")
+    parser.add_argument("--priority", default="default", help="notify: min | low | default | high | urgent")
     args = parser.parse_args(argv)
 
     try:
@@ -551,6 +716,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "config":
             return cmd_config(settings)
+        if args.command == "notify":
+            return cmd_notify(settings, args.title, args.message, args.priority)
+        if args.command == "after-close":
+            return cmd_after_close(settings)
+        if args.command == "storage":
+            return cmd_storage(settings, args.action, args.date)
+        if args.command == "backtest":
+            return cmd_backtest(settings, args.date_from, args.date_to, args.walk_forward, args.grid, args.equity)
         if args.command == "opra-widen":
             return cmd_opra_widen(settings, args.date_from, args.date_to, args.band, args.run_budget)
         if args.command == "vol-study":

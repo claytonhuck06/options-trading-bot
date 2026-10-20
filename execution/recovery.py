@@ -23,6 +23,7 @@ class RecoveryReport:
     orders_never_sent: list[str] = field(default_factory=list)
     still_open_at_broker: list[str] = field(default_factory=list)
     recon: ReconResult | None = None
+    carried: list[str] = field(default_factory=list)     # positions carried into the day (filled in by the trader)
 
     @property
     def safe_to_resume(self) -> bool:
@@ -30,7 +31,7 @@ class RecoveryReport:
         return self.recon is not None and self.recon.ok and not self.still_open_at_broker
 
 
-def recover(broker: BrokerAPI, book: OrderStore) -> RecoveryReport:
+def recover(broker: BrokerAPI, book: OrderStore, hedge_shares: dict[str, int] | None = None) -> RecoveryReport:
     rep = RecoveryReport()
     for row in book.unresolved():
         rep.orders_checked += 1
@@ -45,7 +46,7 @@ def recover(broker: BrokerAPI, book: OrderStore) -> RecoveryReport:
             rep.orders_found_filled.append(coid)
         if not order.status.terminal:
             rep.still_open_at_broker.append(coid)
-    rep.recon = reconcile(book.open_positions(), broker.positions(), broker.open_orders(),
+    rep.recon = reconcile(book.open_positions(), broker.positions(), broker.open_orders(), hedge_shares=hedge_shares,
                           expected_open_orders=set())
     book.event("recovery", {"checked": rep.orders_checked, "filled": rep.orders_found_filled,
                             "never_sent": rep.orders_never_sent, "still_open": rep.still_open_at_broker,

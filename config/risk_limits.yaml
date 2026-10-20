@@ -17,7 +17,7 @@ preferred_concurrent_positions: 2
 take_profit_pct_of_risk: 0.20         # 20% of capital at risk in the trade
 
 allow_uncovered_short_options: false
-allow_overnight_positions: false
+allow_overnight_positions: true       # owner decision 2026-10-19: multi-day positions may be held overnight (refused in live)
 allow_auto_risk_increase: false
 allow_autonomous_strategy_changes: false
 
@@ -40,3 +40,16 @@ max_hedge_shares: 30
 max_quote_age_with_positions_seconds: 60   # market data older than this while holding positions = emergency
 max_consecutive_execution_failures: 3
 approval_valid_seconds: 30            # a risk approval expires; each order needs a fresh one
+
+# --- Multi-day strategy (owner decisions 2026-10-19, paper trading) ---------------
+# Only positions opened by a multi-day strategy may be held overnight; every other
+# position still closes the same day. These limits form their own risk pool.
+multiday:
+  per_trade_risk_pct: 0.03            # up to 3% of start-of-day equity may be lost on one multi-day trade
+  max_open_positions: 1
+  close_days_before_expiry: 7         # never hold into an option's final week (assignment and pin risk)
+  assignment_extrinsic_threshold: 0.05  # $/share: a short leg in the money with less time value than this is closed
+  dividend_estimate: 1.90             # $/share, SPY quarterly dividend estimate (early-assignment check)
+  ex_dividend_dates: []               # explicit SPY ex-dividend dates (YYYY-MM-DD); empty = third Friday of Mar/Jun/Sep/Dec
+  open_settle_minutes: 5              # after the open, wait this long for fresh quotes before acting on held positions
+  gap_exit_slack: 0.25                # $/share extra allowed when closing a position that gapped past its stop

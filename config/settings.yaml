@@ -95,6 +95,15 @@ schedule:                             # Eastern time, HH:MM
 storage:
   sqlite_path: data/storage/options_quant.db
   history_path: data/storage/history.db       # historical SPY minute bars (risk calibration / replay)
+  # Live collector data (~1 GB per trading day). Paid Databento history is never touched.
+  keep_full_days: 5                   # newest trading days kept at full 15-second detail
+  archive_after_days: 30              # older days: moved to compressed files in archive_path (restorable)
+  archive_path: data/storage/live_archive     # days in between are thinned to one quote per contract per minute
+
+alerts:
+  # Push notifications via ntfy (free). The topic is set in the git-ignored .env file
+  # (OPTIONS_QUANT_NTFY_TOPIC). Urgent events are pushed at once; trades come in one daily summary.
+  daily_summary: true
 
 logging:
   level: INFO

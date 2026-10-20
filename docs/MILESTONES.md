@@ -134,6 +134,36 @@ Requirement: orders placed, modified, cancelled, filled and reconciled correctly
 - [x] 236 automated tests passing
 - [ ] Paper demo on the real paper account (scheduled for the 2026-10-20 session)
 
+## Owner decisions — 2026-10-19
+- Overnight holds are allowed (`allow_overnight_positions: true`), for paper trading only; the config refuses it in live.
+  Only positions opened by a multi-day strategy may be held; every other position still closes the same day.
+- A multi-day trade may risk up to **3%** of start-of-day equity (`multiday.per_trade_risk_pct: 0.03`), from its own
+  risk pool, one position at a time. Same-day trades keep their 0.5% / 2.5% limits.
+- Open question for the strategy backtest: the account-wide daily loss limit (1.5%) is smaller than one multi-day
+  trade's 3% max loss, so a large gap day can trigger "close everything for today". The backtest will show how often.
+
+## Multi-day readiness (built 2026-10-19; strategy itself waits for the April 2025 crash test)
+- [x] Separate multi-day risk pool in the risk engine (3% per trade, 1 open position); positions flagged `hold_overnight`
+- [x] Overnight exit rules: never into the final week before expiry; close a short leg likely to be exercised early
+      (in the money with less time value than the dividend the day before SPY goes ex-dividend, or with ~no time value)
+- [x] Early assignment recognised and handled: assigned leg removed from the book, shares bought/sold back, rest of the
+      position closed, P&L kept (premium + share unwind); anything that is not exactly an assignment still halts
+- [x] Overnight gaps: today's loss limit is measured from yesterday's close (broker `last_equity`), so a gap counts;
+      a position already past its stop at the open is closed as `gap_stop` with a wider allowed price
+- [x] Open: stale quotes in the first 5 minutes mean "wait", not "halt"; held positions untouched until the open settles
+- [x] Morning check before the open (trader now starts 8:20 CT): unknown orders settled, overnight assignments
+      recognised, broker vs our records, positions carried into the day, missed trading days
+- [x] Walk-forward testing (`backtesting/walk_forward.py`) and the standard report (`backtesting/metrics.py`):
+      win rate, profit factor, average per trade with t-stat, worst drawdown ($, %, days), Sharpe, Sortino;
+      `main.py backtest --walk-forward TRAIN,TEST --grid strategy.KEY=V1,V2`
+- [x] Phone alerts via ntfy (free): kill switch, early assignment, gap stop, startup halt, failed demo, collector or
+      trader stopping, missed days; one daily summary after the close (`main.py after-close`, launchd 15:20 CT)
+- [x] Live-data storage cleanup: newest 5 trading days full detail, then one quote per contract per minute, after 30
+      days moved to compressed files (restorable: `main.py storage restore --date D`). Paid Databento data untouched
+- [x] 288 automated tests passing
+- [ ] Multi-day strategy ($20-wing short iron butterfly, ~5-day hold) — build and backtest only if the crash test passes
+- [ ] Multi-day support inside the backtest engine (carry positions across days) — part of the strategy build
+
 ## Phase 7 — Backtesting (requires suitable historical quote data)
 ## Phase 8 — Observation mode, then 60–90+ days of paper trading
 ## Phase 9 — Qwen analyst (Ollama installed; no model pulled yet)

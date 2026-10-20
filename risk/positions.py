@@ -53,6 +53,7 @@ class Position:
     anchor_symbol: str | None = None
     entry_fees: float = 0.0        # $ already paid
     exit_fees: float = 0.0         # $ expected to close
+    hold_overnight: bool = False   # opened by a multi-day strategy: exempt from the same-day close rule
 
     @property
     def expiration(self) -> date:

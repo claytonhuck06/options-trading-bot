@@ -36,7 +36,8 @@ def test_initial_risk_values_match_plan():
     assert (r.drawdown_warning_pct, r.drawdown_shutdown_pct) == (0.05, 0.10)
     assert r.max_concurrent_positions == 3
     assert r.take_profit_pct_of_risk == 0.20
-    assert not r.allow_uncovered_short_options and not r.allow_overnight_positions
+    assert not r.allow_uncovered_short_options and r.allow_overnight_positions
+    assert r.multiday.per_trade_risk_pct == 0.03          # owner decision 2026-10-19 (paper)
 
 
 def test_live_requires_authorization_phrase():
@@ -59,7 +60,7 @@ def test_live_refused_even_with_phrase_in_this_build(monkeypatch):
         ({"allow_uncovered_short_options": True}, "prohibited"),
         ({"allow_auto_risk_increase": True}, "prohibited"),
         ({"allow_autonomous_strategy_changes": True}, "prohibited"),
-        ({"allow_overnight_positions": True}, "overnight"),
+        ({"multiday__per_trade_risk_pct": 0.10}, "per_trade_risk_pct"),
         ({"preferred_concurrent_positions": 5}, "preferred"),
         ({"reference_equity": -1}, "reference_equity"),
         ({"surprise_setting": 1}, "surprise_setting"),

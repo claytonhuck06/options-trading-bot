@@ -50,6 +50,10 @@ def net_prices(legs: list[OrderLeg], quotes: dict[str, LegQuote]) -> tuple[float
     return mid, exe
 
 
+def _is_stock(legs: list[OrderLeg]) -> bool:
+    return len(legs) == 1 and legs[0].intent == "stock"
+
+
 def _round_toward_worse(price: float) -> float:
     """Round to a cent in the direction that is more likely to fill (we pay up / accept less)."""
     import math
@@ -109,7 +113,8 @@ class OrderManager:
                         break
 
             coid = f"oq-{plan_key}-{len(previous) + attempt}"
-            self.book.create(coid, plan_key, position_id, intent, legs, remaining, limit, mid)
+            # Share orders are kept out of the option transaction-cost tally (which counts x100 per contract).
+            self.book.create(coid, plan_key, position_id, intent, legs, remaining, limit, None if _is_stock(legs) else mid)
             result.client_order_ids.append(coid)
             order = self._send(coid, legs, remaining, limit)
             if order is None:
@@ -151,7 +156,10 @@ class OrderManager:
     # --- internals ---------------------------------------------------------------------
     def _send(self, coid: str, legs: list[OrderLeg], qty: int, limit: float) -> BrokerOrder | None:
         try:
-            order = self.broker.submit_multileg(coid, legs, qty, limit)
+            if _is_stock(legs):
+                order = self.broker.submit_stock(coid, legs[0].symbol, legs[0].side, qty, abs(limit))
+            else:
+                order = self.broker.submit_multileg(coid, legs, qty, limit)
         except SubmitTimeout as exc:
             # Unknown whether it arrived: ask the broker, never resend blindly.
             self.book.event("submit_ambiguous", {"client_order_id": coid, "error": str(exc)})

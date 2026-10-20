@@ -1,14 +1,21 @@
 """The paper-trading session: one cycle every few seconds during market hours.
 
 Each cycle, in order:
-  1. Read account equity; take the start-of-day snapshot on the first cycle.
-  2. Reconcile our book with the broker (the broker is the truth).
+  1. Read account equity; take the start-of-day snapshot on the first cycle. The snapshot is the
+     equity at the previous close, so an overnight gap counts against today's loss limit.
+  2. Recognise any early assignment (execution/assignment.py), then reconcile our book with the
+     broker (the broker is the truth).
   3. Evaluate the kill switch (losses, drawdown, stale data, reconciliation,
      execution failures, uncovered shorts, manual STOP file).
   4. Manage open positions: emergency flatten, or the normal exit rules.
   5. Only if everything is normal: price the latest snapshot, scan, ask the risk
      engine, and send the single best approved trade.
 Market data comes from the collector's database (the collector runs separately).
+
+Right after the open, quotes in the database are still yesterday's until the collector's first
+cycles arrive. For the first few minutes (multiday.open_settle_minutes) stale data means "wait",
+not "halt", and positions held overnight are not acted on until quotes have settled, except in
+an emergency.
 """
 
 from __future__ import annotations
@@ -22,6 +29,7 @@ from zoneinfo import ZoneInfo
 from core.config import PROJECT_ROOT, Settings
 from core.logging_setup import get_logger
 from data.storage.db import MarketDataStore
+from execution.assignment import apply_to_position, detect_assignments
 from execution.broker_api import BrokerAPI, OrderLeg
 from execution.order_store import OrderStore
 from execution.orders import OrderManager
@@ -37,6 +45,7 @@ from risk.positions import LegQuote, OptionLeg, Portfolio, Position, max_defined
 from risk.risk_engine import RiskContext, TradeRequest, approval_is_valid, approve
 from risk.state import Level, RiskStateStore
 from risk.stress import load as load_stress
+from monitoring import alerts
 from strategies.relative_value import scan
 
 log = get_logger("trader")
@@ -102,12 +111,35 @@ class TradingSession:
 
     # --- lifecycle -------------------------------------------------------------------
     def startup(self):
-        rep = recover(self.broker, self.book)
-        today = self.now().astimezone(EASTERN).date()
+        """Morning check before the day starts: settle unknown orders, recognise overnight assignments,
+        reconcile with the broker and list what is being carried into the day."""
+        now = self.now()
+        today = now.astimezone(EASTERN).date()
+        positions = self.book.open_positions()
+        try:
+            self._handle_assignments(positions, self.broker.positions(), [])
+        except Exception as exc:                 # never let the check itself stop the reconciliation below
+            log.warning("assignment check failed at startup: %s", exc)
+        shares = self._assignment_shares()
+        rep = recover(self.broker, self.book, hedge_shares={self.underlying: shares} if shares else None)
         if not rep.safe_to_resume:
             self.state.escalate(Level.HALTED, "startup_recovery_unsafe", today, rep.recon.summary() if rep.recon else None)
-        log.info("startup recovery: %s", rep.recon.summary() if rep.recon else "no reconciliation")
+            alerts.urgent("Trading halted at startup", "The broker's positions do not match our records: "
+                          f"{rep.recon.summary() if rep.recon else 'unknown'}. Nothing will trade until a person checks it.")
+        carried = self.book.open_positions()
+        stale = [p.position_id for p in carried if not p.hold_overnight and p.opened_at.astimezone(EASTERN).date() < today]
+        if stale:
+            alerts.urgent("Same-day position left open overnight",
+                          f"{', '.join(stale)} should have closed yesterday. It will be closed at the open.")
+        rep.carried = [f"{p.position_id} (expires {p.expiration})" for p in carried]
+        log.info("startup recovery: %s; carried into the day: %s", rep.recon.summary() if rep.recon else "no reconciliation",
+                 rep.carried or "nothing")
         return rep
+
+    def _settling(self, now: datetime) -> bool:
+        local = now.astimezone(EASTERN)
+        opened = datetime.combine(local.date(), datetime.strptime("09:30", "%H:%M").time(), EASTERN)
+        return opened <= local < opened + timedelta(minutes=self.s.risk.multiday.open_settle_minutes)
 
     def cycle(self) -> CycleReport:
         now = self.now()
@@ -115,11 +147,14 @@ class TradingSession:
         rep = CycleReport(now, "NORMAL")
         positions = self.book.open_positions()
 
-        # 1-2. account and reconciliation
+        # 1-2. account, assignments and reconciliation
         equity = self.broker.equity()
-        day = self.state.start_day(today, equity)
+        day = self.state.start_day(today, self.broker.last_equity())
         broker_positions = self.broker.positions()
-        recon = reconcile(positions, broker_positions, self.broker.open_orders(), expected_open_orders=set())
+        positions = self._handle_assignments(positions, broker_positions, rep.notes)
+        shares = self._assignment_shares()
+        recon = reconcile(positions, broker_positions, self.broker.open_orders(),
+                          hedge_shares={self.underlying: shares} if shares else None, expected_open_orders=set())
         rep.reconciled = recon.ok
         if not recon.ok:
             rep.notes.append(recon.summary())
@@ -129,14 +164,25 @@ class TradingSession:
         legs = {l.symbol for p in positions for l in p.legs}
         quotes, quote_age = self._leg_quotes(legs, now) if legs else ({}, 0.0)
         data_age = None if spot_age is None or (legs and quote_age is None) else max(spot_age, quote_age or 0.0)
+        settling = self._settling(now)
+        waiting = settling and (data_age is None or data_age > self.s.risk.max_quote_age_with_positions_seconds)
         # Portfolio risk can only be calculated if we have a quote for every leg we hold.
-        risk_ok = not legs or (quote_age is not None and len(quotes) == len(legs))
-        ks = evaluate(HealthInputs(equity, len(positions), data_age, recon.ok, self.orders.consecutive_failures,
+        risk_ok = waiting or not legs or (quote_age is not None and len(quotes) == len(legs))
+        previous = self.state.level(today)
+        ks = evaluate(HealthInputs(equity, 0 if waiting else len(positions), data_age, recon.ok, self.orders.consecutive_failures,
                                    list(recon.unexpected_at_broker), recon.uncovered_shorts, risk_ok, STOP_FILE.exists()),
                       day, self.s.risk, self.state, today)
         rep.level, rep.triggers = ks.level.name, ks.triggers
+        if ks.level > previous:
+            self._alert_level(ks.level, ks.triggers, equity - day.start_equity)
+        if waiting:
+            rep.notes.append("waiting for fresh market data after the open")
+            return rep
 
-        # 4. exits
+        # 4. exits (assignment shares first, then positions)
+        if shares:
+            rep.exits.append(self._unwind_shares(shares))
+        force = set(self.state._get("force_close_positions", []))
         for pos in positions:
             if self.book.has_live_orders(pos.position_id):
                 rep.notes.append(f"{pos.position_id}: an order is still working; waiting")
@@ -144,12 +190,21 @@ class TradingSession:
             if any(l.symbol not in quotes for l in pos.legs):
                 rep.notes.append(f"no quotes for {pos.position_id}; cannot evaluate exit")
                 continue
-            decision = evaluate_exit(pos, quotes, now, self.s, ks.level, self._anchor_z(pos, quotes, spot, now))
+            if pos.position_id in force:
+                rep.exits.append(self._close(pos, "early_assignment", quotes, emergency=ks.level >= Level.FLATTEN_TODAY))
+                continue
+            if pos.hold_overnight and settling and ks.level < Level.FLATTEN_TODAY:
+                rep.notes.append(f"{pos.position_id}: held overnight; waiting for the open to settle")
+                continue
+            decision = evaluate_exit(pos, quotes, now, self.s, ks.level, self._anchor_z(pos, quotes, spot, now), spot)
             if decision.close:
                 rep.exits.append(self._close(pos, decision.reason, quotes, emergency=ks.level >= Level.FLATTEN_TODAY))
+                if decision.reason in ("gap_stop", "dividend_assignment_risk", "early_assignment_risk", "near_expiry"):
+                    alerts.send(f"Closing {pos.position_id}: {decision.reason.replace('_', ' ')}",
+                                f"{rep.exits[-1]}. Loss/profit at decision: ${decision.pnl:,.0f}.", "high")
 
         # 5. entries
-        if ks.level != Level.NORMAL or not recon.ok or not self.s.can_submit_orders:
+        if ks.level != Level.NORMAL or not recon.ok or not self.s.can_submit_orders or shares:
             return rep
         if self.book.todays_costs(today) >= self.s.execution.max_daily_transaction_costs:
             rep.notes.append("daily transaction-cost cap reached")
@@ -169,6 +224,81 @@ class TradingSession:
             return rep
         rep.entry = self._open(best, run_id, result, equity, day, ks.level, positions, now)
         return rep
+
+    # --- early assignment ------------------------------------------------------------------
+    def _assignment_shares(self) -> int:
+        """Shares delivered by assignments that have not been sold / bought back yet."""
+        return sum(b["shares"] for b in self.state._get("assignment_batches", []))
+
+    def _handle_assignments(self, positions: list[Position], broker_positions, notes: list[str]) -> list[Position]:
+        found = detect_assignments(positions, broker_positions, self.underlying, self._assignment_shares())
+        if not found:
+            return positions
+        batches = self.state._get("assignment_batches", [])
+        extra = self.state._get("assignment_pnl", {})
+        force = set(self.state._get("force_close_positions", []))
+        for pos in positions:
+            mine = [a for a in found if a.position_id == pos.position_id]
+            if not mine:
+                continue
+            for a in mine:
+                leg = next(l for l in pos.legs if l.symbol == a.symbol)
+                # The short option's premium is kept; the shares were delivered at the strike price.
+                extra[pos.position_id] = extra.get(pos.position_id, 0.0) + leg.entry_price * 100 * a.contracts
+                batches.append({"position_id": pos.position_id, "shares": a.shares, "strike": a.strike})
+            apply_to_position(pos, mine)
+            self.book.update_position_legs(pos)
+            force.add(pos.position_id)
+        self.state._set("assignment_batches", batches)
+        self.state._set("assignment_pnl", extra)
+        self.state._set("force_close_positions", sorted(force))
+        self.book.event("early_assignment", {"assignments": [a.__dict__ for a in found]})
+        text = "; ".join(f"{a.contracts} {a.option_type} {a.strike:g} in {a.position_id} -> {a.shares:+d} {self.underlying} shares"
+                         for a in found)
+        notes.append(f"early assignment: {text}")
+        alerts.urgent("Early assignment", f"{text}. The bot is unwinding the shares and closing the rest of the position.")
+        return self.book.open_positions()
+
+    def _unwind_shares(self, shares: int) -> str:
+        if self.book.has_live_orders("assignment"):
+            return "assignment shares: an order is still working"
+        def quote() -> dict[str, LegQuote]:
+            r = self.store.conn.execute("SELECT bid, ask FROM underlying_quotes WHERE symbol=? AND is_usable=1 "
+                                        "ORDER BY received_at DESC LIMIT 1", (self.underlying,)).fetchone()
+            return {self.underlying: LegQuote(r[0], r[1], 0.2, self.now())} if r and r[0] and r[1] else {}
+
+        q = quote().get(self.underlying)
+        if q is None:
+            return "assignment shares: no usable share quote yet"
+        side = "sell" if shares > 0 else "buy"
+        exe = q.ask if side == "buy" else -q.bid
+        key = f"assignment-{self.now():%Y%m%d}-{self.book.plan_count('assignment', 'close')}"
+        res = self.orders.execute(key, "assignment", "close", [OrderLeg(self.underlying, side, 1, "stock")], abs(shares),
+                                  quote, exe + self.s.risk.multiday.gap_exit_slack)
+        if res.filled_qty:
+            price = abs(res.avg_net_price)
+            frac = res.filled_qty / abs(shares)
+            extra = self.state._get("assignment_pnl", {})
+            left = []
+            for b in self.state._get("assignment_batches", []):
+                done = round(b["shares"] * frac)
+                extra[b["position_id"]] = extra.get(b["position_id"], 0.0) + done * (price - b["strike"])
+                if b["shares"] - done:
+                    left.append({**b, "shares": b["shares"] - done})
+            self.state._set("assignment_pnl", extra)
+            self.state._set("assignment_batches", left)
+        return f"assignment shares {side} {abs(shares)}: {res.status} {res.filled_qty}" + (f" ({res.reason})" if res.reason else "")
+
+    def _alert_level(self, level: Level, triggers: list[str], pnl_today: float) -> None:
+        what = {Level.NO_NEW_ENTRIES: "No new trades (drawdown warning)", Level.FLATTEN_TODAY: "Closing everything for today",
+                Level.HALTED: "Trading HALTED"}[level]
+        reasons = ", ".join(t.replace("_", " ") for t in triggers) or "manual"
+        msg = f"Kill switch: {reasons}. Today's P&L ${pnl_today:,.0f}."
+        if level == Level.HALTED:
+            msg += " Restart needs a person: main.py killswitch reset."
+        elif level == Level.NO_NEW_ENTRIES:
+            msg += " To allow trading today: main.py killswitch ack-warning."
+        (alerts.urgent if level >= Level.FLATTEN_TODAY else lambda t, m: alerts.send(t, m, "high"))(what, msg)
 
     # --- helpers ------------------------------------------------------------------------
     def _anchor_z(self, pos: Position, quotes: dict[str, LegQuote], spot, now) -> float | None:
@@ -227,7 +357,12 @@ class TradingSession:
                       for l, q in unit]
         from execution.orders import net_prices
         _, exe = net_prices(order_legs, quotes)
-        slack = 0.25 if emergency else self.s.execution.max_price_deterioration
+        if emergency:
+            slack = 0.25
+        elif reason in ("gap_stop", "early_assignment"):
+            slack = self.s.risk.multiday.gap_exit_slack           # the market jumped: getting out matters more than price
+        else:
+            slack = self.s.execution.max_price_deterioration
         key = f"{pos.position_id}-close-{self.book.plan_count(pos.position_id, 'close')}"
         res = self.orders.execute(key, pos.position_id, "close", order_legs, n,
                                   lambda: self._leg_quotes({l.symbol for l in pos.legs}, self.now())[0], exe + slack)
@@ -235,6 +370,11 @@ class TradingSession:
             entry_net = sum(q * l.entry_price for l, q in unit)            # signed per spread
             realized = -(entry_net + res.avg_net_price) * 100 * res.filled_qty - (pos.entry_fees + pos.exit_fees) * res.filled_qty / n
             if res.filled_qty >= n:
+                extra = self.state._get("assignment_pnl", {})
+                realized += extra.pop(pos.position_id, 0.0)          # premium kept + share unwind, after an assignment
+                self.state._set("assignment_pnl", extra)
+                self.state._set("force_close_positions",
+                                [p for p in self.state._get("force_close_positions", []) if p != pos.position_id])
                 self.book.mark_position_closed(pos.position_id, reason, realized)
             else:
                 pos.legs = [OptionLeg(l.symbol, l.underlying, l.option_type, l.strike, l.expiration,

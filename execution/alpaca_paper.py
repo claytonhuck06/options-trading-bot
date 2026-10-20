@@ -48,6 +48,8 @@ class AlpacaPaperBroker:
 
     def _convert(self, o) -> BrokerOrder:
         legs = {l.symbol: float(l.filled_avg_price) for l in (o.legs or []) if l.filled_avg_price is not None}
+        if not o.legs and o.filled_avg_price is not None:           # a single-symbol (share) order
+            legs = {o.symbol: float(o.filled_avg_price)}
         return BrokerOrder(str(o.id), o.client_order_id, _STATUS.get(_v(o.status), OrderStatus.UNKNOWN),
                            int(float(o.qty or 0)), int(float(o.filled_qty or 0)), float(o.limit_price or 0), legs)
 
@@ -59,6 +61,16 @@ class AlpacaPaperBroker:
                                    side=OrderSide.BUY if l.side == "buy" else OrderSide.SELL,
                                    position_intent=_INTENT[l.intent]) for l in legs],
         )
+        return self._submit(req, client_order_id, qty, limit_price)
+
+    def submit_stock(self, client_order_id: str, symbol: str, side: str, qty: int, limit_price: float) -> BrokerOrder:
+        """Shares, e.g. to unwind an early assignment. limit_price is a positive $/share."""
+        req = LimitOrderRequest(symbol=symbol, qty=qty, side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
+                                type=OrderType.LIMIT, time_in_force=TimeInForce.DAY, limit_price=round(limit_price, 2),
+                                client_order_id=client_order_id)
+        return self._submit(req, client_order_id, qty, limit_price)
+
+    def _submit(self, req, client_order_id: str, qty: int, limit_price: float) -> BrokerOrder:
         try:
             return self._convert(self.__client.submit_order(req))
         except APIError as exc:
@@ -97,3 +109,6 @@ class AlpacaPaperBroker:
 
     def equity(self) -> float:
         return float(self.__client.get_account().equity)
+
+    def last_equity(self) -> float:
+        return float(self.__client.get_account().last_equity)

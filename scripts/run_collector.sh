@@ -24,4 +24,10 @@ fi
 export OPTIONS_QUANT_ENV=paper
 echo "=== $(date) collector launch ===" >> "$LOG"
 # caffeinate -i keeps the Mac from idle-sleeping while collecting (closing the lid still sleeps it).
-exec /usr/bin/caffeinate -i "$PROJECT/.venv/bin/python" -W ignore main.py collect --wait-for-open >> "$LOG" 2>&1
+/usr/bin/caffeinate -i "$PROJECT/.venv/bin/python" -W ignore main.py collect --wait-for-open >> "$LOG" 2>&1
+code=$?
+if (( code != 0 )); then
+  "$PROJECT/.venv/bin/python" -W ignore main.py notify --priority urgent --title "Market-data collector stopped" \
+    --message "The collector exited with code $code (see logs/collector_$(date +%Y-%m-%d).log). Trading halts without fresh data." >> "$LOG" 2>&1
+fi
+exit $code

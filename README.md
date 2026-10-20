@@ -4,8 +4,8 @@ Local-first quantitative options trading research platform (SPY first), built
 phase by phase per the master plan. See [docs/MILESTONES.md](docs/MILESTONES.md)
 for status.
 
-**Current state: Phase 6 — automatic PAPER trading (Alpaca paper account only; no live-money code). The system cannot place, change or cancel
-orders — that code does not exist yet.**
+**Current state: Phase 6 — automatic PAPER trading (Alpaca paper account only; no live-money code).
+Overnight holding is allowed for multi-day strategies (paper only); see docs/MILESTONES.md.**
 
 ## Setup
 
@@ -34,6 +34,10 @@ file (see `.env.example`). Keys are never printed or logged.
 .venv/bin/python main.py killswitch --env paper     # status | stop | ack-warning | reset --authorization "..."
 .venv/bin/python main.py paper-demo --env paper     # end-to-end order test on the paper account (market hours)
 .venv/bin/python main.py trade --env paper          # paper-trade until the close (collector must be running)
+.venv/bin/python main.py backtest --env paper --from 2026-09-21 --to 2026-10-16 --walk-forward 10,5
+.venv/bin/python main.py after-close --env paper    # daily summary to the phone + storage cleanup
+.venv/bin/python main.py storage status --env paper # live-data storage: status | cleanup | restore --date D
+.venv/bin/python main.py notify --env paper --title "Hi" --message "test"   # phone alert
 .venv/bin/python -m pytest                 # test suite
 ```
 
@@ -55,9 +59,19 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.optionsquant.collect
 
 ## Daily automatic paper trading
 
-A second launchd job (`com.optionsquant.trader`) runs `scripts/run_trader.sh` at 8:40 a.m. Central on weekdays,
-10 minutes after the open. It needs the collector running. The first time it runs the paper demo, and it only trades
-if that passes. Log: `logs/trader_<date>.log`.
+A second launchd job (`com.optionsquant.trader`) runs `scripts/run_trader.sh` at 8:20 a.m. Central on weekdays,
+before the open. It runs the morning check (unknown orders, overnight assignments, broker vs our records, missed days),
+waits for the open, then trades until the close. It needs the collector running. The first time it runs the paper
+demo, and it only trades if that passes. Log: `logs/trader_<date>.log`.
+
+## Phone alerts and the daily summary
+
+Alerts go through ntfy (free). Install the **ntfy** app and subscribe to the topic in `.env`
+(`OPTIONS_QUANT_NTFY_TOPIC`; keep it private — anyone with the name can read the alerts). Urgent events are pushed at
+once: kill switch, early assignment, a position closed after an overnight gap, a halt at startup, a failed paper
+demo, the collector or trader stopping, missed trading days. Trades arrive in one summary after the close: a third
+launchd job (`com.optionsquant.afterclose`, 3:20 p.m. Central) runs `main.py after-close`, which also cleans up old
+live data (newest 5 days full detail, then one quote per minute, archived to compressed files after 30 days).
 
 **To stop trading immediately**, any of these work:
 - create a file named `STOP` in the project folder (the kill switch halts and flattens on the next cycle)
@@ -87,8 +101,9 @@ if that passes. Log: `logs/trader_<date>.log`.
 - One authoritative config. Unknown keys, out-of-range values and inconsistent
   limits stop the program at startup.
 - Risk limits live only in `risk_limits.yaml`; environment files cannot override them.
-- Uncovered shorts, overnight positions, automatic risk increases and autonomous
-  strategy changes are rejected if switched on.
+- Uncovered shorts, automatic risk increases and autonomous strategy changes are
+  rejected if switched on. Overnight positions are allowed only for multi-day
+  strategies, in paper trading, from their own risk pool (owner decision 2026-10-19).
 - Trading defaults to off and cannot be turned on in development, backtest or
   observation environments.
 - A paper environment refuses to start if pointed at a live URL or live key.

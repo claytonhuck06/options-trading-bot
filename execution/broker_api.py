@@ -32,7 +32,7 @@ class OrderLeg:
     symbol: str
     side: str                    # buy | sell
     ratio: int                   # per unit of the strategy
-    intent: str                  # buy_to_open | sell_to_open | buy_to_close | sell_to_close
+    intent: str                  # buy_to_open | sell_to_open | buy_to_close | sell_to_close | stock (shares)
 
 
 @dataclass(frozen=True)
@@ -63,12 +63,14 @@ class BrokerAPI(Protocol):
     is_paper: bool
 
     def submit_multileg(self, client_order_id: str, legs: list[OrderLeg], qty: int, limit_price: float) -> BrokerOrder: ...
+    def submit_stock(self, client_order_id: str, symbol: str, side: str, qty: int, limit_price: float) -> BrokerOrder: ...
     def get_order(self, broker_id: str) -> BrokerOrder: ...
     def find_order(self, client_order_id: str) -> BrokerOrder | None: ...
     def cancel_order(self, broker_id: str) -> None: ...
     def open_orders(self) -> list[BrokerOrder]: ...
     def positions(self) -> list[BrokerPosition]: ...
     def equity(self) -> float: ...
+    def last_equity(self) -> float: ...          # equity at the previous close (start of today's P&L)
 
 
 class SubmitTimeout(Exception):
@@ -91,6 +93,7 @@ class SimulatedBroker:
 
     def __init__(self, equity: float = 20_000.0, leg_prices: dict[str, float] | None = None):
         self._equity = equity
+        self._last_equity: float | None = None
         self.leg_prices = leg_prices or {}
         self.behaviours: list[SimBehaviour] = []
         self.orders: dict[str, BrokerOrder] = {}
@@ -137,6 +140,10 @@ class SimulatedBroker:
             raise SubmitTimeout("connection reset after send")
         return self.orders[oid]
 
+    def submit_stock(self, client_order_id, symbol, side, qty, limit_price):
+        sign = 1 if side == "buy" else -1
+        return self.submit_multileg(client_order_id, [OrderLeg(symbol, side, 1, "stock")], qty, sign * limit_price)
+
     def get_order(self, broker_id):
         o = self.orders[broker_id]
         legs, beh, polls = self._meta[broker_id]
@@ -163,11 +170,17 @@ class SimulatedBroker:
         return [o for o in self.orders.values() if not o.status.terminal]
 
     def positions(self):
-        return [BrokerPosition(s, q, self.leg_prices.get(s, 1.0), "us_option") for s, q in self._positions.items()]
+        return [BrokerPosition(s, q, self.leg_prices.get(s, 1.0), "us_option" if len(s) > 6 else "us_equity")
+                for s, q in self._positions.items()]
 
     def equity(self):
         return self._equity
 
+    def last_equity(self):
+        return self._equity if self._last_equity is None else self._last_equity
+
     # test helpers
     def add_position(self, symbol: str, qty: int) -> None:
         self._positions[symbol] = self._positions.get(symbol, 0) + qty
+        if self._positions[symbol] == 0:
+            del self._positions[symbol]

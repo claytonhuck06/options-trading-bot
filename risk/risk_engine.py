@@ -34,6 +34,7 @@ class TradeRequest:
     fees_per_spread: float             # $ round trip
     requested_contracts: int
     anchor_symbol: str | None = None
+    multi_day: bool = False            # held for days: sized from the separate multi-day risk pool
 
 
 @dataclass
@@ -75,6 +76,7 @@ def _proposed_position(req: TradeRequest, n: int, ctx: RiskContext) -> Position:
     pos.max_loss = max_defined_loss(pos)
     pos.profit_target = lim.take_profit_pct_of_risk * pos.max_loss
     pos.stop_loss = lim.stop_loss_pct_of_max_loss * pos.max_loss
+    pos.hold_overnight = req.multi_day
     return pos
 
 
@@ -125,7 +127,10 @@ def approve(req: TradeRequest, ctx: RiskContext) -> Decision:
         reasons.append("outside_entry_window")
     if ctx.data_age_seconds is None or ctx.data_age_seconds > s.strategy.max_quote_age_seconds:
         reasons.append("market_data_stale")
-    if len(ctx.portfolio.positions) >= lim.max_concurrent_positions:
+    pool = [p for p in ctx.portfolio.positions if p.hold_overnight == req.multi_day]
+    if req.multi_day and not lim.allow_overnight_positions:
+        reasons.append("overnight_positions_not_allowed")
+    if len(pool) >= (lim.multiday.max_open_positions if req.multi_day else lim.max_concurrent_positions):
         reasons.append("max_concurrent_positions")
     if any(l.symbol not in ctx.quotes for l in req.legs) or req.underlying not in ctx.spots:
         reasons.append("missing_quotes")
@@ -147,16 +152,26 @@ def approve(req: TradeRequest, ctx: RiskContext) -> Decision:
         return refuse()
 
     # --- sizing: shrink until every portfolio limit holds --------------------
+    # Same-day and multi-day trades draw on separate risk pools.
     eq = ctx.day.start_equity
-    used = sum(p.max_loss for p in ctx.portfolio.positions)
-    remaining = lim.aggregate_planned_risk_pct * eq - used
-    if size_contracts(probe.max_loss, lim.per_trade_risk_pct * eq, math.inf) < 1:
+    used = sum(p.max_loss for p in pool)
+    if req.multi_day:
+        per_trade = lim.multiday.per_trade_risk_pct * eq
+        remaining = per_trade * lim.multiday.max_open_positions - used
+    else:
+        per_trade = lim.per_trade_risk_pct * eq
+        remaining = lim.aggregate_planned_risk_pct * eq - used
+    if size_contracts(probe.max_loss, per_trade, math.inf) < 1:
         return refuse("trade_larger_than_per_trade_limit")
-    n = min(req.requested_contracts, size_contracts(probe.max_loss, lim.per_trade_risk_pct * eq, remaining))
+    n = min(req.requested_contracts, size_contracts(probe.max_loss, per_trade, remaining))
     if n < 1:
         return refuse("risk_budget_exhausted")
 
+    # A multi-day trade's worst case is its defined max loss, already capped by its own budget above,
+    # so its stress loss is checked against that budget rather than today's intraday loss allowance.
     allowance = (daily_limit + min(pnl_today, 0.0)) * lim.stress_loss_pct_of_daily_allowance
+    if req.multi_day:
+        allowance += per_trade
     last_fail: list[str] = []
     while n >= 1:
         pos = _proposed_position(req, n, ctx)

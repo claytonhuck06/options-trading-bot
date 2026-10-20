@@ -14,7 +14,7 @@ from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockLatestTradeRequest
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import QueryOrderStatus
-from alpaca.trading.requests import GetOptionContractsRequest, GetOrdersRequest
+from alpaca.trading.requests import GetCalendarRequest, GetOptionContractsRequest, GetOrdersRequest
 
 from core.config import ConfigError, Settings
 from core.secrets import AlpacaCredentials
@@ -75,6 +75,10 @@ class ReadOnlyBroker:
     def market_clock(self) -> dict:
         c = self.__trading.get_clock()
         return {"is_open": c.is_open, "next_open": c.next_open.isoformat(), "next_close": c.next_close.isoformat()}
+
+    def trading_days(self, start, end) -> list:
+        """Exchange trading days (dates) from start to end inclusive."""
+        return [c.date for c in self.__trading.get_calendar(GetCalendarRequest(start=start, end=end))]
 
     def latest_underlying_trade(self, symbol: str) -> dict:
         trade = self.__data.get_stock_latest_trade(StockLatestTradeRequest(symbol_or_symbols=symbol, feed=self._stock_feed))[symbol]

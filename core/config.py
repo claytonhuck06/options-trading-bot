@@ -49,6 +49,10 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class AlertSettings(_Strict):
+    daily_summary: bool = True           # one push after the close with the day's trades (routine trades are not pushed one by one)
+
+
 class AppSettings(_Strict):
     name: str
     timezone: str
@@ -201,6 +205,15 @@ class ScheduleSettings(_Strict):
 class StorageSettings(_Strict):
     sqlite_path: str
     history_path: str = "data/storage/history.db"
+    keep_full_days: int = Field(default=5, ge=1, le=365)
+    archive_after_days: int = Field(default=30, ge=2, le=3650)
+    archive_path: str = "data/storage/live_archive"
+
+    @model_validator(mode="after")
+    def _retention_order(self) -> "StorageSettings":
+        if self.archive_after_days <= self.keep_full_days:
+            raise ValueError("archive_after_days must be greater than keep_full_days")
+        return self
 
 
 class LoggingSettings(_Strict):
@@ -215,6 +228,25 @@ class LoggingSettings(_Strict):
         if v not in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
             raise ValueError("invalid logging level")
         return v
+
+
+class MultiDayLimits(_Strict):
+    per_trade_risk_pct: float = Field(gt=0, le=0.05)
+    max_open_positions: int = Field(ge=1, le=5)
+    close_days_before_expiry: int = Field(ge=1, le=30)
+    assignment_extrinsic_threshold: float = Field(ge=0, le=5)
+    dividend_estimate: float = Field(ge=0, le=20)
+    ex_dividend_dates: list[str] = []
+    open_settle_minutes: int = Field(ge=0, le=60)
+    gap_exit_slack: float = Field(ge=0, le=2)
+
+    @field_validator("ex_dividend_dates")
+    @classmethod
+    def _dates(cls, v: list[str]) -> list[str]:
+        from datetime import date
+        for d in v:
+            date.fromisoformat(str(d))
+        return [str(d) for d in v]
 
 
 class RiskLimits(_Strict):
@@ -245,6 +277,7 @@ class RiskLimits(_Strict):
     max_quote_age_with_positions_seconds: float = Field(gt=0)
     max_consecutive_execution_failures: int = Field(ge=1)
     approval_valid_seconds: float = Field(gt=0, le=300)
+    multiday: MultiDayLimits
 
     @model_validator(mode="after")
     def _consistent(self) -> "RiskLimits":
@@ -260,8 +293,6 @@ class RiskLimits(_Strict):
         for flag in ("allow_uncovered_short_options", "allow_auto_risk_increase", "allow_autonomous_strategy_changes"):
             if getattr(self, flag):
                 raise ValueError(f"{flag} must be false (prohibited by policy)")
-        if self.allow_overnight_positions:
-            raise ValueError("allow_overnight_positions must be false in this version")
         return self
 
 
@@ -279,6 +310,7 @@ class Settings(_Strict):
     schedule: ScheduleSettings
     storage: StorageSettings
     logging: LoggingSettings
+    alerts: AlertSettings = AlertSettings()
     risk: RiskLimits
 
     @model_validator(mode="after")
@@ -291,6 +323,8 @@ class Settings(_Strict):
         if env in (Environment.DEVELOPMENT, Environment.BACKTEST, Environment.OBSERVATION):
             if self.trading.enabled or self.trading.allow_order_submission:
                 raise ValueError(f"trading cannot be enabled in the {env.value} environment")
+        if env is Environment.LIVE and self.risk.allow_overnight_positions:
+            raise ValueError("overnight positions are allowed for paper trading only, not live")
         if self.trading.allow_order_submission and not self.trading.enabled:
             raise ValueError("allow_order_submission requires trading.enabled")
         return self

@@ -35,3 +35,14 @@ def edit_yaml():
 def _clean_env(monkeypatch):
     for name in ("OPTIONS_QUANT_ENV", "OPTIONS_QUANT_LIVE_AUTHORIZATION"):
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def alerts_sent(monkeypatch):
+    """No test ever reaches ntfy: every alert is captured here instead."""
+    from monitoring import alerts
+    sent = []
+    monkeypatch.setenv(alerts.TOPIC_VAR, "test-topic")
+    monkeypatch.setattr(alerts, "_post", lambda url, body, headers, timeout: sent.append(
+        {"url": url, "title": headers["Title"], "priority": headers["Priority"], "message": body.decode()}))
+    return sent
