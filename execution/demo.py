@@ -103,7 +103,7 @@ def run_demo(settings: Settings, session: TradingSession, out_dir: Path | None =
         return finish(False)
     res = session.orders.execute(req.request_id, req.request_id, "open", legs, dec.contracts,
                                  lambda: session._leg_quotes({a.option.symbol, b.option.symbol}, datetime.now(timezone.utc))[0],
-                                 (a.option.ask - b.option.bid) + settings.execution.max_price_deterioration,
+                                 (a.option.ask - b.option.bid) + settings.execution.price_slack(a.option.ask - b.option.bid),
                                  still_approved=lambda: approval_is_valid(dec, datetime.now(timezone.utc)))
     step(f"Open order: {res.status}, filled {res.filled_qty} at net {res.avg_net_price}")
     if not res.filled_qty:

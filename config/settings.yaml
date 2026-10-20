@@ -87,7 +87,8 @@ execution:
   order_timeout_seconds: 60           # an unfilled order is cancelled after this long (owner: 20 s was too short)
   max_reprice_attempts: 3             # cancel-and-resubmit steps toward the executable price
   entry_start_fraction: 0.5           # first limit sits halfway between mid and the executable price
-  max_price_deterioration: 0.05       # $/share worse than the approved price: abort instead of chasing
+  max_price_deterioration: 0.05       # minimum $/share slack past the approved price before aborting (no chasing)
+  max_price_deterioration_pct: 0.01   # ...or 1% of the spread's price, whichever is larger (owner 2026-10-20)
   max_daily_transaction_costs: 50.0   # $ of spread paid + fees per day; beyond this, no new entries
   poll_interval_seconds: 1.0
 

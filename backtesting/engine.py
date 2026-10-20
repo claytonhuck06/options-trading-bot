@@ -190,7 +190,7 @@ class Backtest:
                     pending_entry = None
                     legs1 = [OptionLeg(l.symbol, l.underlying, l.option_type, l.strike, l.expiration, l.quantity, 0.0) for l in req.legs]
                     px = _exec_net(legs1, rows, closing=False)
-                    if px is None or px[0] > approved_net + s.execution.max_price_deterioration + 1e-9:
+                    if px is None or px[0] > approved_net + s.execution.price_slack(approved_net) + 1e-9:
                         res.skipped_fills += 1
                     else:
                         n = dec.contracts

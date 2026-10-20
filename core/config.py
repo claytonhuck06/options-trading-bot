@@ -185,8 +185,13 @@ class ExecutionSettings(_Strict):
     max_reprice_attempts: int = Field(ge=1, le=10)
     entry_start_fraction: float = Field(ge=0, le=1)
     max_price_deterioration: float = Field(ge=0)
+    max_price_deterioration_pct: float = Field(default=0.0, ge=0, le=0.05)
     max_daily_transaction_costs: float = Field(ge=0)
     poll_interval_seconds: float = Field(gt=0, le=10)
+
+    def price_slack(self, price: float) -> float:
+        """$/share an order may end up worse than its reference price: a % of the price, never below the minimum."""
+        return max(self.max_price_deterioration, self.max_price_deterioration_pct * abs(price))
 
 
 class DatabentoSettings(_Strict):

@@ -406,7 +406,7 @@ class TradingSession:
         res = self.orders.execute(
             req.request_id, req.request_id, "open", order_legs, dec.contracts,
             lambda: self._leg_quotes({l.symbol for l in legs}, self.now())[0],
-            approved_net + self.s.execution.max_price_deterioration,
+            approved_net + self.s.execution.price_slack(approved_net),
             still_approved=lambda: approval_is_valid(dec, self.now()), description=sp.describe())
         if res.filled_qty:
             self.book.open_position(self._filled_position(dec, res))
@@ -478,7 +478,7 @@ class TradingSession:
         res = self.orders.execute(
             req.request_id, req.request_id, "open", order_legs, approval.contracts,
             lambda: self._leg_quotes({lsym, ssym}, self.now())[0],
-            sp.debit + self.s.execution.max_price_deterioration,
+            sp.debit + self.s.execution.price_slack(sp.debit),
             still_approved=lambda: approval_is_valid(approval, self.now()), description=what)
         if res.filled_qty:
             self.book.open_position(self._filled_position(approval, res))
@@ -497,7 +497,7 @@ class TradingSession:
         elif reason in ("gap_stop", "early_assignment"):
             slack = self.s.risk.multiday.gap_exit_slack           # the market jumped: getting out matters more than price
         else:
-            slack = self.s.execution.max_price_deterioration
+            slack = self.s.execution.price_slack(exe)
         key = f"{pos.position_id}-close-{self.book.plan_count(pos.position_id, 'close')}"
         res = self.orders.execute(key, pos.position_id, "close", order_legs, n,
                                   lambda: self._leg_quotes({l.symbol for l in pos.legs}, self.now())[0], exe + slack)

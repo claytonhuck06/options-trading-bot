@@ -217,3 +217,12 @@ def test_recovery_checks_unresolved_orders_and_never_resends():
     assert rep.orders_never_sent == ["oq-crash-0"] and rep.orders_found_filled == ["oq-filled-0"]
     assert broker.submitted == sent_before                    # nothing resent
     assert not rep.safe_to_resume                             # the fill is not in our book: a person must look
+
+
+
+def test_price_slack_is_one_percent_with_a_floor():
+    s = load_settings().execution
+    assert s.price_slack(12.23) == pytest.approx(0.1223)    # $12 spread: 1% = 12 cents
+    assert s.price_slack(-9.40) == pytest.approx(0.094)     # credit spreads use the size of the price
+    assert s.price_slack(0.39) == pytest.approx(0.05)       # cheap spread: the $0.05 minimum applies
+    assert s.price_slack(0.0) == pytest.approx(0.05)
