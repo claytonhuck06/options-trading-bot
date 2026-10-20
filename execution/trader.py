@@ -440,7 +440,7 @@ class TradingSession:
         first_try = datetime.strptime(ws.entry_start or ws.run_at, "%H:%M").time()
         if not ws.enabled or self.source is None or local.time() < first_try:
             return None
-        if local.time() >= datetime.strptime(self.s.schedule.no_new_positions_after, "%H:%M").time():
+        if local.time() >= datetime.strptime(ws.entry_end or self.s.schedule.no_new_positions_after, "%H:%M").time():
             return None
         monday = datetime.combine(today - timedelta(days=today.weekday()), datetime.min.time(), EASTERN)
         if self.book.strategy_opened_since(WEEKLY, monday):

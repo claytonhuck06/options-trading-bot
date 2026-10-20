@@ -229,7 +229,7 @@ def test_weekly_spread_retries_through_the_day_until_a_trade(settings, monkeypat
     """Owner 2026-10-20: from entry_start, if the try doesn't produce a trade, try again every retry_minutes."""
     from execution.broker_api import SimBehaviour
     monkeypatch.setattr(trader_mod, "STOP_FILE", tmp_path / "STOP")
-    assert settings.weekly_spread.entry_start == "09:45" and settings.weekly_spread.retry_minutes == 10
+    assert settings.weekly_spread.entry_start == "09:35" and settings.weekly_spread.retry_minutes == 10
     src = FakeSource()
     broker = SimulatedBroker(equity=100_000)
     broker.queue(SimBehaviour("reject"))                          # first try: no trade
@@ -248,9 +248,14 @@ def test_weekly_spread_retries_through_the_day_until_a_trade(settings, monkeypat
     assert src.chain_calls == 2
 
 
-def test_weekly_spread_stops_trying_at_the_entry_cutoff(settings, monkeypatch, tmp_path):
+def test_weekly_spread_trades_after_the_same_day_cutoff_until_its_own(settings, monkeypatch, tmp_path):
+    """Owner 2026-10-20: the weekly spread may open all trading day (to 15:50 ET); same-day trades still stop at 15:00."""
     monkeypatch.setattr(trader_mod, "STOP_FILE", tmp_path / "STOP")
     src = FakeSource()
-    s, _, _ = _session(settings, datetime(2026, 10, 20, 19, 5, tzinfo=timezone.utc), src)     # 15:05 ET
+    s, _, _ = _session(settings, datetime(2026, 10, 20, 19, 30, tzinfo=timezone.utc), src)    # 15:30 ET
+    s.cycle()
+    assert len([p for p in s.book.open_positions() if p.strategy == WEEKLY]) == 1
+    src = FakeSource()
+    s, _, _ = _session(settings, datetime(2026, 10, 20, 19, 50, tzinfo=timezone.utc), src)    # 15:50 ET
     s.cycle()
     assert src.chain_calls == 0

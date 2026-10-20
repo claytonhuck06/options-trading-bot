@@ -142,7 +142,11 @@ def approve(req: TradeRequest, ctx: RiskContext) -> Decision:
     if ctx.level >= Level.NO_NEW_ENTRIES:
         reasons.append(f"kill_switch_{ctx.level.name.lower()}")
     t = ctx.now.astimezone(EASTERN).time()
-    if not (time.fromisoformat(s.schedule.scan_start) <= t < time.fromisoformat(s.schedule.no_new_positions_after)):
+    window = (s.schedule.scan_start, s.schedule.no_new_positions_after)
+    if req.strategy == WEEKLY:                   # held for weeks: its own window (config weekly_spread.entry_end)
+        window = (s.weekly_spread.entry_start or s.schedule.scan_start,
+                  s.weekly_spread.entry_end or s.schedule.no_new_positions_after)
+    if not (time.fromisoformat(window[0]) <= t < time.fromisoformat(window[1])):
         reasons.append("outside_entry_window")
     if ctx.data_age_seconds is None or ctx.data_age_seconds > s.strategy.max_quote_age_seconds:
         reasons.append("market_data_stale")
