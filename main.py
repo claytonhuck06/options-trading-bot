@@ -233,6 +233,18 @@ def _paper_session(settings):
     return TradingSession(settings, store, AlpacaPaperBroker(settings, load_alpaca_credentials(settings))), store
 
 
+def _retrying(call, wait: float = 15.0):
+    """Call until it succeeds: used for read-only clock checks that must survive a network blip."""
+    import time as _t
+
+    while True:
+        try:
+            return call()
+        except Exception as exc:
+            print(f"connection problem ({type(exc).__name__}); retrying in {wait:.0f}s", flush=True)
+            _t.sleep(wait)
+
+
 def cmd_trade(settings, log) -> int:
     import time as _t
 
@@ -255,14 +267,36 @@ def cmd_trade(settings, log) -> int:
             alerts.urgent("Bot missed trading days", "No market data was collected on " + ", ".join(f"{d:%a %b %d}" for d in missed)
                           + ". The Mac was probably asleep or off. Today is running normally.")
         # The daily schedule starts the trader before the open so this check happens first; wait for the bell.
-        while not (c := clock.market_clock())["is_open"]:
+        while not (c := _retrying(clock.market_clock))["is_open"]:
             next_open = datetime.fromisoformat(c["next_open"]).astimezone(EASTERN)
             if next_open.date() != today:
                 print("Market closed today — nothing to do.")
                 return 0
             _t.sleep(min(max((next_open - datetime.now(EASTERN)).total_seconds(), 1), 60))
-        while clock.market_clock()["is_open"]:
-            r = session.cycle()
+        # Network errors (Wi-Fi not back yet after the Mac wakes, a broker hiccup) are retried, never fatal.
+        # After 3 minutes of failures the owner is alerted; on reconnect, unknown orders are settled and the
+        # book is reconciled again (session.startup) before trading resumes.
+        failing_since, alerted = None, False
+        while True:
+            try:
+                if not clock.market_clock()["is_open"]:
+                    break
+                if failing_since is not None:
+                    session.startup()
+                    if alerted:
+                        alerts.send("Bot reconnected", "The connection is back; positions were re-checked against the broker.")
+                    failing_since, alerted = None, False
+                r = session.cycle()
+            except Exception as exc:
+                failing_since = failing_since or _t.monotonic()
+                log.warning("cycle failed (%s); retrying", type(exc).__name__)
+                print(f"{datetime.now(EASTERN):%H:%M:%S} cannot reach the broker or data ({type(exc).__name__}); retrying", flush=True)
+                if not alerted and _t.monotonic() - failing_since > 180:
+                    alerts.urgent("Bot cannot reach the broker", f"No connection for 3 minutes ({type(exc).__name__}). "
+                                  "Open positions are not being watched. It keeps retrying.")
+                    alerted = True
+                _t.sleep(15)
+                continue
             line = f"{r.at:%H:%M:%S} {r.level}"
             if r.triggers:
                 line += f" triggers={r.triggers}"

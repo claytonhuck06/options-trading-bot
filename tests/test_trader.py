@@ -90,10 +90,20 @@ def test_stale_data_with_positions_halts(settings, monkeypatch, tmp_path):
     broker = SimulatedBroker()
     store = MarketDataStore(":memory:")
     market(store, NOW - timedelta(minutes=10))               # last data is 10 minutes old
-    s = TradingSession(settings, store, broker, now=lambda: NOW, sleep=lambda _: None)
+    clock = [NOW]
+    s = TradingSession(settings, store, broker, now=lambda: clock[0], sleep=lambda _: None)
     held_position(s, broker)
-    rep = s.cycle()
-    assert rep.level == "HALTED" and "market_data_unreliable_with_positions" in rep.triggers
+    first = s.cycle()                                         # just started: the collector gets a few minutes
+    assert first.level == "NORMAL" and "waiting for fresh market data after a pause" in first.notes
+    levels = {}
+    for minutes in range(1, 7):                               # still nothing fresh after the 5-minute grace: halt
+        clock[0] = NOW + timedelta(minutes=minutes)
+        rep = s.cycle()
+        levels[minutes] = rep.level
+        if rep.level == "HALTED":
+            break
+    assert levels[4] == "NORMAL" and minutes == 5
+    assert "market_data_unreliable_with_positions" in rep.triggers
 
 
 def test_market_close_exit(settings, monkeypatch, tmp_path):

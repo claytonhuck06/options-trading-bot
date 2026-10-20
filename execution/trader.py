@@ -15,7 +15,9 @@ Market data comes from the collector's database (the collector runs separately).
 Right after the open, quotes in the database are still yesterday's until the collector's first
 cycles arrive. For the first few minutes (multiday.open_settle_minutes) stale data means "wait",
 not "halt", and positions held overnight are not acted on until quotes have settled, except in
-an emergency.
+an emergency. The same grace applies when the session starts late or resumes after a pause (the
+Mac slept, e.g. closed for a drive): the collector needs a moment to fetch fresh quotes, so old
+data then is expected, not a failure. Data still stale once the grace has passed halts as usual.
 """
 
 from __future__ import annotations
@@ -51,6 +53,7 @@ from strategies.relative_value import scan
 log = get_logger("trader")
 EASTERN = ZoneInfo("America/New_York")
 STOP_FILE = PROJECT_ROOT / "STOP"
+PAUSE_SECONDS = 120          # no cycle for this long (normal: every 15 s) = the Mac slept or the program stalled
 
 
 @dataclass
@@ -74,6 +77,8 @@ class TradingSession:
         self.stress = load_stress(PROJECT_ROOT / "config" / "stress_calibration.json")
         self.now = now
         self.underlying = settings.market_data.primary_underlying
+        self._last_cycle_end: datetime | None = None
+        self._grace_until: datetime | None = None
 
     # --- market data from the collector's database ----------------------------------
     def _spot(self, now: datetime) -> tuple[float | None, float | None]:
@@ -143,6 +148,24 @@ class TradingSession:
 
     def cycle(self) -> CycleReport:
         now = self.now()
+        grace = timedelta(minutes=self.s.risk.multiday.open_settle_minutes)
+        paused = None if self._last_cycle_end is None else (now - self._last_cycle_end).total_seconds()
+        if paused is None or paused > PAUSE_SECONDS:
+            self._grace_until = now + grace          # first cycle (possibly a late start) or resuming after a pause
+        try:
+            rep = self._cycle(now)
+        finally:
+            self._last_cycle_end = self.now()
+        if paused is not None and paused > PAUSE_SECONDS:
+            rep.notes.append(f"resumed after {paused / 60:.0f} minutes without running")
+            held = len(self.book.open_positions())
+            alerts.send("Bot resumed after a pause",
+                        f"It did not run for {paused / 60:.0f} minutes (Mac asleep or offline). "
+                        + (f"{held} position(s) were open and unwatched; checking them now." if held else "No positions were open.")
+                        + " Trading continues normally once fresh prices arrive.", "high" if held else "default")
+        return rep
+
+    def _cycle(self, now: datetime) -> CycleReport:
         today = now.astimezone(EASTERN).date()
         rep = CycleReport(now, "NORMAL")
         positions = self.book.open_positions()
@@ -165,7 +188,8 @@ class TradingSession:
         quotes, quote_age = self._leg_quotes(legs, now) if legs else ({}, 0.0)
         data_age = None if spot_age is None or (legs and quote_age is None) else max(spot_age, quote_age or 0.0)
         settling = self._settling(now)
-        waiting = settling and (data_age is None or data_age > self.s.risk.max_quote_age_with_positions_seconds)
+        resuming = self._grace_until is not None and now < self._grace_until
+        waiting = (settling or resuming) and (data_age is None or data_age > self.s.risk.max_quote_age_with_positions_seconds)
         # Portfolio risk can only be calculated if we have a quote for every leg we hold.
         risk_ok = waiting or not legs or (quote_age is not None and len(quotes) == len(legs))
         previous = self.state.level(today)
@@ -177,7 +201,7 @@ class TradingSession:
         if ks.level > previous:
             self._alert_level(ks.level, ks.triggers, equity - day.start_equity)
         if waiting:
-            rep.notes.append("waiting for fresh market data after the open")
+            rep.notes.append("waiting for fresh market data after the open" if settling else "waiting for fresh market data after a pause")
             return rep
 
         # 4. exits (assignment shares first, then positions)

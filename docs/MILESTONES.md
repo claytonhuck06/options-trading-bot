@@ -154,6 +154,10 @@ Requirement: orders placed, modified, cancelled, filled and reconciled correctly
 - [x] Overnight gaps: today's loss limit is measured from yesterday's close (broker `last_equity`), so a gap counts;
       a position already past its stop at the open is closed as `gap_stop` with a wider allowed price
 - [x] Open: stale quotes in the first 5 minutes mean "wait", not "halt"; held positions untouched until the open settles
+- [x] Mac asleep (e.g. lid closed for a drive) or a late start: on resuming, old quotes mean "wait 5 minutes for the
+      collector", not "halt"; an alert says how long it was away. Network errors are retried instead of crashing the
+      trader; after 3 minutes without a connection the owner is alerted, and on reconnect orders and positions are
+      re-checked with the broker before trading resumes. Data still stale after the grace period halts as before
 - [x] Morning check before the open (trader now starts 8:20 CT): unknown orders settled, overnight assignments
       recognised, broker vs our records, positions carried into the day, missed trading days
 - [x] Walk-forward testing (`backtesting/walk_forward.py`) and the standard report (`backtesting/metrics.py`):

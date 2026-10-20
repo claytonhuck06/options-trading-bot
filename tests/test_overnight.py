@@ -278,3 +278,41 @@ def test_daily_loss_beyond_the_multi_day_allowance_still_flattens(paper, monkeyp
     hold(s, broker, fly)
     rep = s.cycle()
     assert "daily_loss_limit" in rep.triggers and rep.level == "FLATTEN_TODAY"
+
+
+def test_waking_from_sleep_waits_for_fresh_data_instead_of_halting(paper, monkeypatch, tmp_path, alerts_sent):
+    """The Mac slept for 40 minutes (closed for a drive) with a position open: the bot waits for the
+    collector's fresh quotes, says how long it was away, then manages the position normally."""
+    monkeypatch.setattr(trader_mod, "STOP_FILE", tmp_path / "STOP")
+    clock = [NOW]
+    store = MarketDataStore(":memory:")
+    market(store, NOW)
+    s = TradingSession(paper, store, SimulatedBroker(equity=100_000), now=lambda: clock[0], sleep=lambda _: None)
+    hold(s, s.broker, iron_fly(opened=NOW - timedelta(days=1)))
+    assert s.cycle().level == "NORMAL"
+
+    clock[0] = NOW + timedelta(minutes=40)                    # woke up; the database still has 40-minute-old quotes
+    rep = s.cycle()
+    assert rep.level == "NORMAL" and "waiting for fresh market data after a pause" in rep.notes
+    assert "resumed after 40 minutes without running" in rep.notes
+    resumed = [a for a in alerts_sent if a["title"] == "Bot resumed after a pause"]
+    assert len(resumed) == 1 and resumed[0]["priority"] == "4" and "1 position(s)" in resumed[0]["message"]
+
+    clock[0] = NOW + timedelta(minutes=41)                    # the collector caught up
+    market(store, clock[0])
+    rep = s.cycle()
+    assert rep.level == "NORMAL" and not any("waiting" in n for n in rep.notes)
+    assert len([a for a in alerts_sent if a["title"] == "Bot resumed after a pause"]) == 1
+
+
+def test_short_gaps_are_not_pauses(paper, monkeypatch, tmp_path, alerts_sent):
+    monkeypatch.setattr(trader_mod, "STOP_FILE", tmp_path / "STOP")
+    clock = [NOW]
+    store = MarketDataStore(":memory:")
+    market(store, NOW)
+    s = TradingSession(paper, store, SimulatedBroker(equity=100_000), now=lambda: clock[0], sleep=lambda _: None)
+    s.cycle()
+    clock[0] = NOW + timedelta(seconds=90)                    # a slow cycle, not a sleep
+    market(store, clock[0])
+    rep = s.cycle()
+    assert not any("resumed" in n for n in rep.notes) and not any("resumed" in a["title"] for a in alerts_sent)

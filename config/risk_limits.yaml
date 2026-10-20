@@ -51,5 +51,5 @@ multiday:
   assignment_extrinsic_threshold: 0.05  # $/share: a short leg in the money with less time value than this is closed
   dividend_estimate: 1.90             # $/share, SPY quarterly dividend estimate (early-assignment check)
   ex_dividend_dates: []               # explicit SPY ex-dividend dates (YYYY-MM-DD); empty = third Friday of Mar/Jun/Sep/Dec
-  open_settle_minutes: 5              # after the open, wait this long for fresh quotes before acting on held positions
+  open_settle_minutes: 5              # after the open, a late start or waking from sleep: wait this long for fresh quotes before treating old data as a failure
   gap_exit_slack: 0.25                # $/share extra allowed when closing a position that gapped past its stop
