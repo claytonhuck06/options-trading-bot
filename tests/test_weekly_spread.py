@@ -164,8 +164,15 @@ def _at(s, clock, now):
     _spot(s.store, now)
 
 
+def _once_a_day(settings):
+    """The original mode: one try a day at run_at (entry_start unset, no retries)."""
+    ws = settings.weekly_spread.model_copy(update={"entry_start": None, "retry_minutes": 0})
+    return settings.model_copy(update={"weekly_spread": ws})
+
+
 def test_trader_opens_one_weekly_spread_from_the_daily_check(settings, monkeypatch, tmp_path):
     monkeypatch.setattr(trader_mod, "STOP_FILE", tmp_path / "STOP")
+    settings = _once_a_day(settings)
     src = FakeSource()
     s, broker, clock = _session(settings, AT_1100, src)
     s.cycle()
@@ -215,3 +222,35 @@ def test_weekly_spread_off_when_disabled(config_dir, edit_yaml, monkeypatch, tmp
     s, _, _ = _session(settings, AT_1435, src)
     s.cycle()
     assert src.chain_calls == 0 and not s.book.open_positions()
+
+
+
+def test_weekly_spread_retries_through_the_day_until_a_trade(settings, monkeypatch, tmp_path):
+    """Owner 2026-10-20: from entry_start, if the try doesn't produce a trade, try again every retry_minutes."""
+    from execution.broker_api import SimBehaviour
+    monkeypatch.setattr(trader_mod, "STOP_FILE", tmp_path / "STOP")
+    assert settings.weekly_spread.entry_start == "09:45" and settings.weekly_spread.retry_minutes == 10
+    src = FakeSource()
+    broker = SimulatedBroker(equity=100_000)
+    broker.queue(SimBehaviour("reject"))                          # first try: no trade
+    s, broker, clock = _session(settings, AT_1100, src, broker)
+    s.cycle()
+    assert src.chain_calls == 1 and not s.book.open_positions()
+    _at(s, clock, AT_1100 + timedelta(minutes=5))                 # too soon to retry
+    s.cycle()
+    assert src.chain_calls == 1
+    _at(s, clock, AT_1100 + timedelta(minutes=10))                # retry: fills this time
+    s.cycle()
+    assert src.chain_calls == 2
+    assert len([p for p in s.book.open_positions() if p.strategy == WEEKLY]) == 1
+    _at(s, clock, AT_1100 + timedelta(minutes=30))                # one a week: no more tries
+    s.cycle()
+    assert src.chain_calls == 2
+
+
+def test_weekly_spread_stops_trying_at_the_entry_cutoff(settings, monkeypatch, tmp_path):
+    monkeypatch.setattr(trader_mod, "STOP_FILE", tmp_path / "STOP")
+    src = FakeSource()
+    s, _, _ = _session(settings, datetime(2026, 10, 20, 19, 5, tzinfo=timezone.utc), src)     # 15:05 ET
+    s.cycle()
+    assert src.chain_calls == 0

@@ -164,7 +164,9 @@ class WeeklySpreadSettings(_Strict):
     long_delta: float = Field(default=0.50, gt=0, lt=1)
     short_delta: float = Field(default=0.20, gt=0, lt=1)
     time_exit_dte: int = Field(default=14, ge=1, le=60)
-    run_at: str = "14:30"                 # Eastern; once a day from this time (before the 15:00 entry cutoff)
+    run_at: str = "14:30"                 # Eastern daily check: time exits from here; entries too unless entry_start
+    entry_start: str | None = None        # Eastern; first entry try of the day (None = run_at)
+    retry_minutes: int = Field(default=0, ge=0, le=390)   # 0 = once a day; else retry until a spread fills or the cutoff
     strike_band_low: float = Field(default=0.95, gt=0, le=1)
     strike_band_high: float = Field(default=1.15, ge=1, le=2)
 

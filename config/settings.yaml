@@ -78,7 +78,9 @@ weekly_spread:
   long_delta: 0.50
   short_delta: 0.20
   time_exit_dte: 14
-  run_at: "14:30"
+  run_at: "14:30"                     # daily check (Eastern): the 14-days-left time exit happens from here
+  entry_start: "09:45"                # owner 2026-10-20: start trying to open from here, and keep trying...
+  retry_minutes: 10                   # ...every 10 min until a spread fills (one a week) or the 15:00 entry cutoff
   strike_band_low: 0.95
   strike_band_high: 1.15
 

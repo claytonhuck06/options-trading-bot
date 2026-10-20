@@ -432,18 +432,26 @@ class TradingSession:
 
     # --- weekly call spread ----------------------------------------------------------------
     def _weekly_entry(self, now: datetime, today, equity, day, level, positions: list[Position]) -> str | None:
-        """Once a day from weekly_spread.run_at: if no weekly spread was opened this week, build one from a live
-        chain and send it through the risk engine. Returns a description if an order was attempted."""
+        """From weekly_spread.entry_start (or run_at): if no weekly spread was opened this week, build one from a live chain and send
+        it through the risk engine. If that doesn't produce a trade, try again every retry_minutes until the entry
+        cutoff (retry_minutes 0 = once a day). Returns a description if an order was attempted."""
         ws = self.s.weekly_spread
         local = now.astimezone(EASTERN)
-        if not ws.enabled or self.source is None or local.time() < datetime.strptime(ws.run_at, "%H:%M").time():
+        first_try = datetime.strptime(ws.entry_start or ws.run_at, "%H:%M").time()
+        if not ws.enabled or self.source is None or local.time() < first_try:
             return None
-        if self.state._get("weekly_spread_attempted", None) == today.isoformat():
+        if local.time() >= datetime.strptime(self.s.schedule.no_new_positions_after, "%H:%M").time():
             return None
         monday = datetime.combine(today - timedelta(days=today.weekday()), datetime.min.time(), EASTERN)
         if self.book.strategy_opened_since(WEEKLY, monday):
             return None
-        self.state._set("weekly_spread_attempted", today.isoformat())     # one attempt a day, whatever the outcome
+        last = self.state._get("weekly_spread_last_attempt", None)
+        if last:
+            last_t = datetime.fromisoformat(last)
+            if last_t.astimezone(EASTERN).date() == today and (
+                    ws.retry_minutes == 0 or now - last_t < timedelta(minutes=ws.retry_minutes)):
+                return None
+        self.state._set("weekly_spread_last_attempt", now.isoformat())
         from strategies.spy_trend import TrendParams, build_call_spread
         spot, spot_age = self._spot(now)
         if spot is None:
@@ -465,7 +473,8 @@ class TradingSession:
                 OptionLeg(ssym, self.underlying, "call", sp.short_call.strike, sp.expiry, -1, sp.short_call.bid))
         self._live_symbols |= {lsym, ssym}
         quotes, _ = self._leg_quotes({l.symbol for p in positions for l in p.legs} | {lsym, ssym}, now)
-        req = TradeRequest(f"weekly-{today:%Y%m%d}", self.underlying, legs, self.s.strategy.fee_per_contract * 4,
+        req = TradeRequest(f"weekly-{now.astimezone(EASTERN):%Y%m%d-%H%M}", self.underlying, legs,
+                           self.s.strategy.fee_per_contract * 4,
                            sp.contracts, strategy=WEEKLY)
         ctx = RiskContext(now, self.s, self.state, day, equity, level, Portfolio(positions), quotes,
                           {self.underlying: spot}, rate, self.stress, spot_age)
