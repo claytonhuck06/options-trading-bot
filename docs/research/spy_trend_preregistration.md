@@ -151,3 +151,25 @@ Same as the condor's D3, with the same Amendment 3 smoothing. That way nothing n
 
 **Result:** all 8 pass → "go" for the next pre-registered step (the 2024–2026 real-quote check, then paper).
 Any fail → "no-go": the report says which bars failed and by how much, and nothing gets built for trading.
+
+---
+
+## F. Owner decision after the result (2026-10-20)
+
+*Written after the backtest. Recorded here so the record stays honest.*
+
+The backtest was a **no-go** (`docs/research/spy_trend_backtest_2026-10-20.md`): bar 4 (drawdown 10.4%) and bar 8
+(the trend signal did worse than no signal) failed. The owner reviewed this and decided to **paper-trade the
+version without the signal anyway**: buy one spread a week whatever the market is doing. That version made
+$169 per trade over 256 trades in the same test, against $111 for the signal version. It wasn't put through the
+8 bars on its own, and it is mostly a bet that SPY keeps rising.
+
+What runs (paper only), from `config/settings.yaml` → `weekly_spread`:
+- Once a day from 14:30 ET, if no weekly spread has been opened this calendar week: buy the SPY call spread
+  nearest 60 days out (±7), long call ≈ 0.50 delta, short call ≈ 0.20 delta, priced from a live chain.
+- No stop and no profit target. Closed at the daily check once within 14 days of expiry, and at any time by
+  the kill switch, the final-week guard, or early-assignment risk.
+- Risk (owner decision, `config/risk_limits.yaml`): **every strategy gets the same pool, 1.5% of equity per
+  trade and up to 3 open**. That applies to the same-day mispricing strategy (was 0.5% / 2.5%), the multi-day
+  pool (was 3% × 1; nothing uses it today), and the weekly spread. At SPY ≈ $770 one spread costs ≈ $1,250,
+  which didn't fit the old 1% limit. Portfolio delta limit raised from 50% to 75% of equity so three spreads fit.

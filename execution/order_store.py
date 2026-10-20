@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS positions_book (
     closed_at TEXT,
     exit_reason TEXT,
     realized_pnl REAL,
-    hold_overnight INTEGER NOT NULL DEFAULT 0
+    hold_overnight INTEGER NOT NULL DEFAULT 0,
+    strategy TEXT NOT NULL DEFAULT 'mispricing'
 );
 
 CREATE TABLE IF NOT EXISTS execution_events (
@@ -73,6 +74,8 @@ class OrderStore:
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(positions_book)")}
         if "hold_overnight" not in cols:          # databases created before multi-day support
             self.conn.execute("ALTER TABLE positions_book ADD COLUMN hold_overnight INTEGER NOT NULL DEFAULT 0")
+        if "strategy" not in cols:                # databases created before the weekly call spread
+            self.conn.execute("ALTER TABLE positions_book ADD COLUMN strategy TEXT NOT NULL DEFAULT 'mispricing'")
         self.conn.commit()
 
     def event(self, kind: str, detail: dict | None = None) -> None:
@@ -134,9 +137,9 @@ class OrderStore:
     def open_position(self, pos) -> None:
         self.conn.execute(
             "INSERT OR REPLACE INTO positions_book(position_id, underlying, status, legs, max_loss, profit_target, stop_loss, "
-            "anchor_symbol, entry_fees, exit_fees, opened_at, hold_overnight) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "anchor_symbol, entry_fees, exit_fees, opened_at, hold_overnight, strategy) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (pos.position_id, pos.underlying, "open", _legs_json(pos.legs), pos.max_loss, pos.profit_target, pos.stop_loss,
-             pos.anchor_symbol, pos.entry_fees, pos.exit_fees, _iso(pos.opened_at), int(pos.hold_overnight)))
+             pos.anchor_symbol, pos.entry_fees, pos.exit_fees, _iso(pos.opened_at), int(pos.hold_overnight), pos.strategy))
         self.conn.commit()
 
     def update_position_legs(self, pos) -> None:
@@ -157,8 +160,13 @@ class OrderStore:
         for r in self.conn.execute("SELECT * FROM positions_book WHERE status='open'"):
             out.append(Position(r["position_id"], r["underlying"], _legs_from_json(r["legs"]), datetime.fromisoformat(r["opened_at"]),
                                 r["max_loss"], r["profit_target"], r["stop_loss"], r["anchor_symbol"], r["entry_fees"], r["exit_fees"],
-                                bool(r["hold_overnight"])))
+                                bool(r["hold_overnight"]), r["strategy"]))
         return out
+
+    def strategy_opened_since(self, strategy: str, since: datetime) -> int:
+        """Positions of a strategy opened at or after `since` (open or closed): the weekly spread's once-a-week rule."""
+        return self.conn.execute("SELECT COUNT(*) FROM positions_book WHERE strategy=? AND opened_at>=?",
+                                 (strategy, _iso(since))).fetchone()[0]
 
 
 def _legs_json(legs) -> str:

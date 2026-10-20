@@ -44,7 +44,7 @@ from pricing.snapshot import load_snapshot
 from risk.exits import evaluate_exit
 from risk.kill_switch import HealthInputs, evaluate
 from risk.positions import LegQuote, OptionLeg, Portfolio, Position, max_defined_loss
-from risk.risk_engine import RiskContext, TradeRequest, approval_is_valid, approve
+from risk.risk_engine import WEEKLY, RiskContext, TradeRequest, approval_is_valid, approve
 from risk.state import Level, RiskStateStore
 from risk.stress import load as load_stress
 from monitoring import alerts
@@ -69,8 +69,12 @@ class CycleReport:
 
 class TradingSession:
     def __init__(self, settings: Settings, store: MarketDataStore, broker: BrokerAPI,
-                 now=lambda: datetime.now(timezone.utc), sleep=_time.sleep):
+                 now=lambda: datetime.now(timezone.utc), sleep=_time.sleep, source=None):
         self.s, self.store, self.broker = settings, store, broker
+        self.source = source                     # live market data for the weekly spread (outside the collector's range)
+        self._live_symbols: set[str] = set()     # contracts quoted live instead of from the collector's database
+        self._live_cache: dict[str, LegQuote] = {}
+        self._live_seen: dict[str, datetime] = {}
         self.book = OrderStore(store)
         self.state = RiskStateStore(store)
         self.orders = OrderManager(broker, self.book, settings.execution, sleep=sleep)
@@ -91,9 +95,17 @@ class TradingSession:
         return spot, (now - datetime.fromisoformat(row[3])).total_seconds()
 
     def _leg_quotes(self, symbols: set[str], now: datetime, fallback_iv: float = 0.20) -> tuple[dict[str, LegQuote], float | None]:
-        """Latest stored quote per symbol and the age of the oldest one."""
+        """Latest stored quote per symbol and the age of the oldest one. The weekly spread's contracts are
+        quoted live from the broker's data feed (the collector only covers 7-30 days to expiry)."""
         quotes, oldest = {}, 0.0
-        for sym in symbols:
+        live = {sym for sym in symbols if sym in self._live_symbols}
+        if live:
+            got, age = self._live_quotes(live, now, fallback_iv)
+            quotes.update(got)
+            if age is None:
+                return quotes, None
+            oldest = age
+        for sym in symbols - live:
             r = self.store.conn.execute(
                 "SELECT bid, ask, implied_volatility, quote_ts, last_seen_at FROM option_quotes WHERE symbol=? "
                 "ORDER BY received_at DESC LIMIT 1", (sym,)).fetchone()
@@ -103,6 +115,21 @@ class TradingSession:
             oldest = max(oldest, (now - seen).total_seconds())
             quotes[sym] = LegQuote(r[0], r[1], r[2] or fallback_iv, datetime.fromisoformat(r[3]))
         return quotes, oldest
+
+    def _live_quotes(self, symbols: set[str], now: datetime, fallback_iv: float) -> tuple[dict[str, LegQuote], float | None]:
+        """Fetch live quotes. A network error propagates (the cycle is retried, never fatal); a contract with no
+        usable quote in the reply keeps its last good quote, whose age then counts like any stale data."""
+        if self.source is None:
+            return {}, None
+        for q in self.source.fetch_option_quotes(sorted(symbols)):
+            if q.bid is None or q.ask is None or q.ask <= 0 or q.bid > q.ask:
+                continue
+            self._live_cache[q.symbol] = LegQuote(q.bid, q.ask, q.implied_volatility or fallback_iv, q.quote_ts or q.received_at)
+            self._live_seen[q.symbol] = q.received_at
+        if any(sym not in self._live_cache for sym in symbols):
+            return {sym: self._live_cache[sym] for sym in symbols if sym in self._live_cache}, None
+        oldest = max((now - self._live_seen[sym]).total_seconds() for sym in symbols)
+        return {sym: self._live_cache[sym] for sym in symbols}, max(oldest, 0.0)
 
     def _price_now(self, now: datetime) -> tuple[PricingResult, int]:
         snap = load_snapshot(self.store, self.underlying, now, self.s.pricing.snapshot_max_quote_age_seconds)
@@ -120,6 +147,11 @@ class TradingSession:
         reconcile with the broker and list what is being carried into the day."""
         now = self.now()
         today = now.astimezone(EASTERN).date()
+        if self.source is not None and hasattr(self.source, "reconnect"):
+            try:
+                self.source.reconnect()              # after a network change, pooled data connections go dead
+            except Exception as exc:
+                log.warning("market data reconnect failed at startup: %s", exc)
         positions = self.book.open_positions()
         try:
             self._handle_assignments(positions, self.broker.positions(), [])
@@ -169,6 +201,7 @@ class TradingSession:
         today = now.astimezone(EASTERN).date()
         rep = CycleReport(now, "NORMAL")
         positions = self.book.open_positions()
+        self._live_symbols = {l.symbol for p in positions if p.strategy == WEEKLY for l in p.legs}
 
         # 1-2. account, assignments and reconciliation
         equity = self.broker.equity()
@@ -234,6 +267,10 @@ class TradingSession:
         if self.book.todays_costs(today) >= self.s.execution.max_daily_transaction_costs:
             rep.notes.append("daily transaction-cost cap reached")
             return rep
+        weekly = self._weekly_entry(now, today, equity, day, ks.level, positions)
+        if weekly:
+            rep.entry = weekly
+            positions = self.book.open_positions()
         try:
             result, run_id = self._price_now(now)
         except LookupError as exc:
@@ -354,6 +391,9 @@ class TradingSession:
         quotes = {c.option.symbol: LegQuote(c.option.bid, c.option.ask, c.fair_iv or 0.2, c.option.quote_ts)
                   for c in result.contracts if c.option.symbol in {l.symbol for l in legs}
                   or c.option.symbol in {l.symbol for p in positions for l in p.legs}}
+        held_live = {l.symbol for p in positions for l in p.legs} & self._live_symbols
+        if held_live:                                # weekly spread legs are outside the pricing snapshot
+            quotes.update(self._leg_quotes(held_live, now)[0])
         ctx = RiskContext(now, self.s, self.state, day, equity, level, Portfolio(positions), quotes,
                           {self.underlying: result.snapshot.spot}, result.expiries[0].rate if result.expiries else 0.04,
                           self.stress, (now - result.snapshot.spot_received_at).total_seconds())
@@ -369,17 +409,81 @@ class TradingSession:
             approved_net + self.s.execution.max_price_deterioration,
             still_approved=lambda: approval_is_valid(dec, self.now()), description=sp.describe())
         if res.filled_qty:
-            pos = dec.position
-            pos.legs = [OptionLeg(l.symbol, l.underlying, l.option_type, l.strike, l.expiration,
-                                  l.quantity // dec.contracts * res.filled_qty, res.leg_prices.get(l.symbol, l.entry_price))
-                        for l in pos.legs]
-            per = res.filled_qty / dec.contracts
-            pos.entry_fees, pos.exit_fees = pos.entry_fees * per, pos.exit_fees * per
-            pos.max_loss = max_defined_loss(pos)
+            self.book.open_position(self._filled_position(dec, res))
+        return f"{sp.describe()}: {res.status} {res.filled_qty}/{dec.contracts}" + (f" ({res.reason})" if res.reason else "")
+
+    def _filled_position(self, dec, res) -> Position:
+        """The approved position scaled to what actually filled, at the actual leg prices."""
+        pos = dec.position
+        pos.legs = [OptionLeg(l.symbol, l.underlying, l.option_type, l.strike, l.expiration,
+                              l.quantity // dec.contracts * res.filled_qty, res.leg_prices.get(l.symbol, l.entry_price))
+                    for l in pos.legs]
+        per = res.filled_qty / dec.contracts
+        pos.entry_fees, pos.exit_fees = pos.entry_fees * per, pos.exit_fees * per
+        pos.max_loss = max_defined_loss(pos)
+        if pos.strategy == WEEKLY:
+            # No profit target and no stop (as tested); its exits are in risk/exits.py. Recorded as the
+            # whole max loss so nothing else reads them as a trigger.
+            pos.profit_target = pos.stop_loss = pos.max_loss
+        else:
             pos.profit_target = self.s.risk.take_profit_pct_of_risk * pos.max_loss
             pos.stop_loss = self.s.risk.stop_loss_pct_of_max_loss * pos.max_loss
-            self.book.open_position(pos)
-        return f"{sp.describe()}: {res.status} {res.filled_qty}/{dec.contracts}" + (f" ({res.reason})" if res.reason else "")
+        return pos
+
+    # --- weekly call spread ----------------------------------------------------------------
+    def _weekly_entry(self, now: datetime, today, equity, day, level, positions: list[Position]) -> str | None:
+        """Once a day from weekly_spread.run_at: if no weekly spread was opened this week, build one from a live
+        chain and send it through the risk engine. Returns a description if an order was attempted."""
+        ws = self.s.weekly_spread
+        local = now.astimezone(EASTERN)
+        if not ws.enabled or self.source is None or local.time() < datetime.strptime(ws.run_at, "%H:%M").time():
+            return None
+        if self.state._get("weekly_spread_attempted", None) == today.isoformat():
+            return None
+        monday = datetime.combine(today - timedelta(days=today.weekday()), datetime.min.time(), EASTERN)
+        if self.book.strategy_opened_since(WEEKLY, monday):
+            return None
+        self.state._set("weekly_spread_attempted", today.isoformat())     # one attempt a day, whatever the outcome
+        from strategies.spy_trend import TrendParams, build_call_spread
+        spot, spot_age = self._spot(now)
+        if spot is None:
+            return "weekly spread: no SPY price"
+        lo, hi = today + timedelta(days=ws.target_dte - ws.dte_tolerance), today + timedelta(days=ws.target_dte + ws.dte_tolerance)
+        chain = self.source.fetch_chain(self.underlying, lo, hi, spot * ws.strike_band_low, spot * ws.strike_band_high)
+        chains, symbols = _chain_rows(chain)
+        years = ws.target_dte / 365
+        rate = risk_free_rate(self.s, self.store, now, years).rate
+        budget = self.s.risk.weekly_spread.per_trade_risk_pct * day.start_equity
+        dec = build_call_spread(today, TrendParams(ws.target_dte, ws.long_delta, ws.short_delta), spot, chains, rate,
+                                risk_budget=budget, dte_tolerance=ws.dte_tolerance)
+        if dec.spread is None:
+            log.info("weekly spread not built: %s", dec.reason)
+            return f"weekly spread not built: {dec.reason}"
+        sp = dec.spread
+        lsym, ssym = symbols[(sp.expiry, sp.long_call.strike)], symbols[(sp.expiry, sp.short_call.strike)]
+        legs = (OptionLeg(lsym, self.underlying, "call", sp.long_call.strike, sp.expiry, 1, sp.long_call.ask),
+                OptionLeg(ssym, self.underlying, "call", sp.short_call.strike, sp.expiry, -1, sp.short_call.bid))
+        self._live_symbols |= {lsym, ssym}
+        quotes, _ = self._leg_quotes({l.symbol for p in positions for l in p.legs} | {lsym, ssym}, now)
+        req = TradeRequest(f"weekly-{today:%Y%m%d}", self.underlying, legs, self.s.strategy.fee_per_contract * 4,
+                           sp.contracts, strategy=WEEKLY)
+        ctx = RiskContext(now, self.s, self.state, day, equity, level, Portfolio(positions), quotes,
+                          {self.underlying: spot}, rate, self.stress, spot_age)
+        approval = approve(req, ctx)
+        what = (f"weekly call spread {sp.expiry} {sp.long_call.strike:g}/{sp.short_call.strike:g} "
+                f"debit ${sp.debit:.2f}")
+        if not approval.approved:
+            return f"{what}: refused by risk engine: {', '.join(approval.reasons)}"
+        order_legs = [OrderLeg(lsym, "buy", 1, "buy_to_open"), OrderLeg(ssym, "sell", 1, "sell_to_open")]
+        res = self.orders.execute(
+            req.request_id, req.request_id, "open", order_legs, approval.contracts,
+            lambda: self._leg_quotes({lsym, ssym}, self.now())[0],
+            sp.debit + self.s.execution.max_price_deterioration,
+            still_approved=lambda: approval_is_valid(approval, self.now()), description=what)
+        if res.filled_qty:
+            self.book.open_position(self._filled_position(approval, res))
+            alerts.send("Weekly call spread opened", f"{what}, {res.filled_qty} contract(s).")
+        return f"{what}: {res.status} {res.filled_qty}/{approval.contracts}" + (f" ({res.reason})" if res.reason else "")
 
     def _close(self, pos: Position, reason: str, quotes: dict[str, LegQuote], emergency: bool) -> str:
         n = max(abs(l.quantity) for l in pos.legs)
@@ -412,3 +516,28 @@ class TradingSession:
                                       q * (n - res.filled_qty), l.entry_price) for l, q in unit]
                 self.book.update_position_legs(pos)
         return f"{pos.position_id} {reason}: {res.status} {res.filled_qty}/{n}" + (f" ({res.reason})" if res.reason else "")
+
+
+def _chain_rows(chain) -> tuple[dict, dict]:
+    """Alpaca chain snapshot -> {expiry: [ChainRow]} and {(expiry, strike): call symbol}."""
+    from collections import defaultdict
+    from datetime import date as _date
+
+    from strategies.iron_condor import ChainRow
+    calls, puts = defaultdict(dict), defaultdict(dict)
+    for q in chain:
+        occ = q.symbol[-15:]                     # YYMMDD + C/P + strike x 1000 (8 digits)
+        exp = _date(2000 + int(occ[:2]), int(occ[2:4]), int(occ[4:6]))
+        strike = int(occ[7:]) / 1000
+        (calls if occ[6] == "C" else puts)[exp][strike] = q
+    rows, symbols = {}, {}
+    for exp, by_strike in calls.items():
+        out = []
+        for k in sorted(by_strike):
+            c, p = by_strike[k], puts[exp].get(k)
+            out.append(ChainRow(k, c.bid, c.ask, c.implied_volatility, c.delta,
+                                p.bid if p else None, p.ask if p else None,
+                                p.implied_volatility if p else None, p.delta if p else None))
+            symbols[(exp, k)] = c.symbol
+        rows[exp] = out
+    return rows, symbols

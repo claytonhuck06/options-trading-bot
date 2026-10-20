@@ -54,6 +54,7 @@ class Position:
     entry_fees: float = 0.0        # $ already paid
     exit_fees: float = 0.0         # $ expected to close
     hold_overnight: bool = False   # opened by a multi-day strategy: exempt from the same-day close rule
+    strategy: str = "mispricing"   # which strategy owns it: mispricing | weekly_spread (own exits and risk pool)
 
     @property
     def expiration(self) -> date:

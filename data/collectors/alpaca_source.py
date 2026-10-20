@@ -15,7 +15,9 @@ from datetime import date
 from alpaca.data.enums import DataFeed, OptionsFeed
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.historical.option import OptionHistoricalDataClient
-from alpaca.data.requests import OptionChainRequest, StockLatestQuoteRequest, StockLatestTradeRequest
+from alpaca.data.requests import (
+    OptionChainRequest, OptionSnapshotRequest, StockLatestQuoteRequest, StockLatestTradeRequest,
+)
 
 from core.config import Settings
 from core.secrets import AlpacaCredentials
@@ -83,6 +85,16 @@ class AlpacaMarketSource:
             underlying_symbol=underlying, feed=self._ofeed, expiration_date_gte=gte, expiration_date_lte=lte,
             strike_price_gte=strike_gte, strike_price_lte=strike_lte,
         ))
+        return self._quotes(chain)
+
+    def fetch_option_quotes(self, symbols: list[str]) -> list[OptionQuote]:
+        """Latest quotes for specific contracts (the weekly spread's legs, which the collector doesn't cover)."""
+        if not symbols:
+            return []
+        return self._quotes(self._options.get_option_snapshot(OptionSnapshotRequest(
+            symbol_or_symbols=sorted(symbols), feed=self._ofeed)))
+
+    def _quotes(self, chain) -> list[OptionQuote]:
         received = utcnow()
         out = []
         for symbol, snap in chain.items():

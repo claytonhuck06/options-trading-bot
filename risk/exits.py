@@ -13,6 +13,9 @@
   mispricing    the anchor's mispricing has mostly closed (|z| below the exit level)
   time          held longer than the maximum holding period (same-day positions only)
 
+Weekly call spreads (strategy "weekly_spread") have their own short list: emergency, near_expiry,
+early-assignment risk, and a time exit at the daily check once within time_exit_dte days of expiry.
+
 P&L is measured at executable prices including the fees to close, so a
 "profit" exit is profit you could actually take. A position only counts as
 closed once the broker confirms the fills (Phase 6).
@@ -47,6 +50,8 @@ def evaluate_exit(pos: Position, quotes: dict[str, LegQuote], now: datetime, set
     overnight = pos.hold_overnight and lim.allow_overnight_positions
     if level >= Level.FLATTEN_TODAY:
         return ExitDecision(True, "emergency", pnl)
+    if pos.strategy == "weekly_spread":
+        return _weekly_exit(pos, quotes, local, settings, pnl, spot)
     if not overnight and local.time() >= time.fromisoformat(settings.schedule.begin_closing):
         return ExitDecision(True, "market_close", pnl)
     if overnight:
@@ -66,4 +71,21 @@ def evaluate_exit(pos: Position, quotes: dict[str, LegQuote], now: datetime, set
         return ExitDecision(True, "mispricing_gone", pnl)
     if not overnight and (now - pos.opened_at).total_seconds() >= lim.max_holding_minutes * 60:
         return ExitDecision(True, "time", pnl)
+    return ExitDecision(False, None, pnl)
+
+
+def _weekly_exit(pos: Position, quotes: dict[str, LegQuote], local: datetime, settings: Settings, pnl: float,
+                 spot: float | None) -> ExitDecision:
+    """Weekly call spread: no stop and no profit target (as tested). Closed at the daily check time once it is
+    within time_exit_dte days of expiry; closed at any time if a short leg risks early assignment, or if it is
+    somehow inside the multi-day final-week guard."""
+    ws, lim = settings.weekly_spread, settings.risk
+    if near_expiry(pos, local.date(), lim.multiday):
+        return ExitDecision(True, "near_expiry", pnl)
+    if spot is not None:
+        why = assignment_risk(pos, quotes, spot, local.date(), lim.multiday)
+        if why:
+            return ExitDecision(True, why, pnl)
+    if (pos.expiration - local.date()).days <= ws.time_exit_dte and local.time() >= time.fromisoformat(ws.run_at):
+        return ExitDecision(True, "time_exit", pnl)
     return ExitDecision(False, None, pnl)

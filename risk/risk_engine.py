@@ -35,6 +35,24 @@ class TradeRequest:
     requested_contracts: int
     anchor_symbol: str | None = None
     multi_day: bool = False            # held for days: sized from the separate multi-day risk pool
+    strategy: str = "mispricing"       # weekly_spread: its own risk pool (always held overnight)
+
+
+WEEKLY = "weekly_spread"
+
+
+def pool_key(strategy: str, overnight: bool) -> str:
+    """Each strategy draws on its own risk pool: same-day, multi-day, or the weekly call spread."""
+    return WEEKLY if strategy == WEEKLY else ("multiday" if overnight else "sameday")
+
+
+def _pool_limits(lim, key: str) -> tuple[float, int]:
+    """(per-trade risk fraction, max open) of a pool."""
+    if key == WEEKLY:
+        return lim.weekly_spread.per_trade_risk_pct, lim.weekly_spread.max_open_positions
+    if key == "multiday":
+        return lim.multiday.per_trade_risk_pct, lim.multiday.max_open_positions
+    return lim.per_trade_risk_pct, lim.max_concurrent_positions
 
 
 @dataclass
@@ -76,7 +94,8 @@ def _proposed_position(req: TradeRequest, n: int, ctx: RiskContext) -> Position:
     pos.max_loss = max_defined_loss(pos)
     pos.profit_target = lim.take_profit_pct_of_risk * pos.max_loss
     pos.stop_loss = lim.stop_loss_pct_of_max_loss * pos.max_loss
-    pos.hold_overnight = req.multi_day
+    pos.hold_overnight = req.multi_day or req.strategy == WEEKLY
+    pos.strategy = req.strategy
     return pos
 
 
@@ -127,10 +146,13 @@ def approve(req: TradeRequest, ctx: RiskContext) -> Decision:
         reasons.append("outside_entry_window")
     if ctx.data_age_seconds is None or ctx.data_age_seconds > s.strategy.max_quote_age_seconds:
         reasons.append("market_data_stale")
-    pool = [p for p in ctx.portfolio.positions if p.hold_overnight == req.multi_day]
-    if req.multi_day and not lim.allow_overnight_positions:
+    overnight = req.multi_day or req.strategy == WEEKLY
+    key = pool_key(req.strategy, overnight)
+    per_trade_pct, max_open = _pool_limits(lim, key)
+    pool = [p for p in ctx.portfolio.positions if pool_key(p.strategy, p.hold_overnight) == key]
+    if overnight and not lim.allow_overnight_positions:
         reasons.append("overnight_positions_not_allowed")
-    if len(pool) >= (lim.multiday.max_open_positions if req.multi_day else lim.max_concurrent_positions):
+    if len(pool) >= max_open:
         reasons.append("max_concurrent_positions")
     if any(l.symbol not in ctx.quotes for l in req.legs) or req.underlying not in ctx.spots:
         reasons.append("missing_quotes")
@@ -152,25 +174,26 @@ def approve(req: TradeRequest, ctx: RiskContext) -> Decision:
         return refuse()
 
     # --- sizing: shrink until every portfolio limit holds --------------------
-    # Same-day and multi-day trades draw on separate risk pools.
+    # Each strategy draws on its own risk pool (same-day, multi-day, weekly call spread).
     eq = ctx.day.start_equity
     used = sum(p.max_loss for p in pool)
-    if req.multi_day:
-        per_trade = lim.multiday.per_trade_risk_pct * eq
-        remaining = per_trade * lim.multiday.max_open_positions - used
-    else:
-        per_trade = lim.per_trade_risk_pct * eq
+    per_trade = per_trade_pct * eq
+    if key == "sameday":
         remaining = lim.aggregate_planned_risk_pct * eq - used
+    else:
+        remaining = per_trade * max_open - used
     if size_contracts(probe.max_loss, per_trade, math.inf) < 1:
         return refuse("trade_larger_than_per_trade_limit")
     n = min(req.requested_contracts, size_contracts(probe.max_loss, per_trade, remaining))
     if n < 1:
         return refuse("risk_budget_exhausted")
 
-    # A multi-day trade's worst case is its defined max loss, already capped by its own budget above,
-    # so its stress loss is checked against that budget rather than today's intraday loss allowance.
+    # A position held overnight has a worst case equal to its defined max loss, already capped by its own
+    # pool's budget, so its stress loss is checked against that budget rather than today's intraday loss
+    # allowance. Open overnight positions are counted the same way (as the daily loss trigger does).
     allowance = (daily_limit + min(pnl_today, 0.0)) * lim.stress_loss_pct_of_daily_allowance
-    if req.multi_day:
+    allowance += sum(p.max_loss for p in ctx.portfolio.positions if p.hold_overnight)
+    if overnight:
         allowance += per_trade
     last_fail: list[str] = []
     while n >= 1:

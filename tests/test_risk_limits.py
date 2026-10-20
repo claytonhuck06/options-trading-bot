@@ -11,8 +11,8 @@ def limits():
 
 def test_budget_at_20k(limits):
     b = compute_daily_budget(limits, 20_000)
-    assert b.max_risk_per_trade == 100
-    assert b.max_aggregate_planned_risk == 500
+    assert b.max_risk_per_trade == 300               # 1.5% (owner decision 2026-10-20)
+    assert b.max_aggregate_planned_risk == 900       # 4.5%
     assert b.daily_loss_trigger == 300
     assert b.daily_profit_ceiling == 1_000
     assert b.drawdown_warning_equity == 19_000
@@ -21,12 +21,12 @@ def test_budget_at_20k(limits):
 
 def test_budget_scales_with_equity_25k(limits):
     b = compute_daily_budget(limits, 25_000)
-    assert (b.max_risk_per_trade, b.max_aggregate_planned_risk, b.daily_loss_trigger, b.daily_profit_ceiling) == (125, 625, 375, 1_250)
+    assert (b.max_risk_per_trade, b.max_aggregate_planned_risk, b.daily_loss_trigger, b.daily_profit_ceiling) == (375, 1_125, 375, 1_250)
 
 
 def test_drawdown_measured_from_high_water_mark(limits):
     b = compute_daily_budget(limits, 22_000, high_water_mark=25_000)
-    assert b.max_risk_per_trade == 110            # daily limits use today's equity
+    assert b.max_risk_per_trade == 330            # daily limits use today's equity
     assert b.drawdown_warning_equity == 23_750    # drawdown uses the high-water mark
     assert b.drawdown_shutdown_equity == 22_500
 

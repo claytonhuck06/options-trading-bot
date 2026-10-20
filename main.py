@@ -230,8 +230,11 @@ def _paper_session(settings):
     from execution.alpaca_paper import AlpacaPaperBroker
     from execution.trader import TradingSession
 
+    from data.collectors.alpaca_source import AlpacaMarketSource
+
     store = MarketDataStore(PROJECT_ROOT / settings.storage.sqlite_path)
-    return TradingSession(settings, store, AlpacaPaperBroker(settings, load_alpaca_credentials(settings))), store
+    creds = load_alpaca_credentials(settings)
+    return TradingSession(settings, store, AlpacaPaperBroker(settings, creds), source=AlpacaMarketSource(settings, creds)), store
 
 
 def _retrying(call, wait: float = 15.0):

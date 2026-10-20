@@ -112,7 +112,7 @@ def test_good_candidate_is_eligible_and_explained():
     c = score(s, r, SETTINGS, BUDGET)
     assert c.eligible, c.reasons
     assert c.max_loss_per_spread == pytest.approx(32 + 0.20)
-    assert c.contracts == int(100 // 32.20)
+    assert c.contracts == int(300 // 32.20)              # 1.5% of $20k
     assert c.profit_target == pytest.approx(0.2 * 32.20)
     text = c.explain()
     assert "ELIGIBLE" in text and "buy 770C" in text and "sell 771C" in text

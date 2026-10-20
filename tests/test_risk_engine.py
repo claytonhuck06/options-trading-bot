@@ -87,7 +87,7 @@ def test_max_defined_loss_vertical():
 def test_approves_and_resizes_to_per_trade_limit(state):
     d = approve(request(n=50), ctx(state))
     assert d.approved and 1 <= d.contracts < 50 and "resized" in d.reasons
-    assert d.position.max_loss <= 0.005 * 20_000 + 1e-9
+    assert d.position.max_loss <= 0.015 * 20_000 + 1e-9
     assert d.position.profit_target == pytest.approx(0.2 * d.position.max_loss)
     assert approval_is_valid(d, NOW) and not approval_is_valid(d, NOW + timedelta(seconds=31))
 
@@ -125,14 +125,14 @@ def test_max_concurrent_positions(state):
 
 def test_aggregate_risk_budget(state):
     big = open_position("big", 780, 781, 1)                  # small exposure; only its budget use matters here
-    big.max_loss = 480                                       # $480 of the $500 aggregate budget already used
+    big.max_loss = 880                                       # $880 of the $900 aggregate budget already used
     one_spread = request().legs
     per_spread = (one_spread[0].entry_price - one_spread[1].entry_price) * 100 + 0.20
     assert per_spread > 20                                   # so not even one more spread fits
     d = approve(request(n=10), ctx(state, portfolio=Portfolio([big])))
     assert not d.approved and d.reasons == ["risk_budget_exhausted"]
-    big.max_loss = 400                                       # $100 left: limited by per-trade AND aggregate
-    huge = request("r3", 760, 780)                           # a $20-wide spread can never fit $100
+    big.max_loss = 800                                       # $100 left: limited by per-trade AND aggregate
+    huge = request("r3", 760, 780)                           # a $20-wide spread can never fit the $300 per-trade limit
     assert approve(huge, ctx(state, portfolio=Portfolio([big]))).reasons == ["trade_larger_than_per_trade_limit"]
     d = approve(request("r2", n=10), ctx(state, portfolio=Portfolio([big])))
     assert d.approved and d.position.max_loss <= 100 + 1e-9
@@ -140,7 +140,7 @@ def test_aggregate_risk_budget(state):
 
 def test_correlated_exposure_counts_against_delta_limit(state):
     # Long SPY shares already near the delta limit: a bullish spread must be cut down or refused.
-    hedges = [StockHedge("SPY", 13, SPOT)]                   # ~$9,984 of SPY delta vs a $10,000 limit
+    hedges = [StockHedge("SPY", 19, SPOT)]                   # ~$14,600 of SPY delta vs a $15,000 limit
     d = approve(request(n=10), ctx(state, portfolio=Portfolio(hedges=hedges)))
     assert not d.approved and "portfolio_delta_limit" in d.reasons
 

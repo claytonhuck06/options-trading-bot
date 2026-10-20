@@ -31,13 +31,15 @@ def test_unknown_environment_rejected():
 
 def test_initial_risk_values_match_plan():
     r = load_settings().risk
-    assert (r.reference_equity, r.per_trade_risk_pct, r.aggregate_planned_risk_pct) == (20000, 0.005, 0.025)
+    assert (r.reference_equity, r.per_trade_risk_pct, r.aggregate_planned_risk_pct) == (20000, 0.015, 0.045)
     assert (r.daily_loss_limit_pct, r.daily_profit_stop_pct) == (0.015, 0.05)
     assert (r.drawdown_warning_pct, r.drawdown_shutdown_pct) == (0.05, 0.10)
     assert r.max_concurrent_positions == 3
     assert r.take_profit_pct_of_risk == 0.20
     assert not r.allow_uncovered_short_options and r.allow_overnight_positions
-    assert r.multiday.per_trade_risk_pct == 0.03          # owner decision 2026-10-19 (paper)
+    # owner decision 2026-10-20 (paper): every strategy gets the same pool, 1.5% per trade, up to 3 open
+    assert (r.multiday.per_trade_risk_pct, r.multiday.max_open_positions) == (0.015, 3)
+    assert (r.weekly_spread.per_trade_risk_pct, r.weekly_spread.max_open_positions) == (0.015, 3)
 
 
 def test_live_requires_authorization_phrase():

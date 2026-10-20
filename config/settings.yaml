@@ -68,6 +68,20 @@ strategy:
   min_target_probability: 0.25       # chance of reaching the profit target within the holding period
   max_candidates_per_scan: 20
 
+weekly_spread:
+  # Buy one SPY bull call spread a week and hold it to 14 days before expiry. Tested in
+  # docs/research/spy_trend_backtest_2026-10-20.md ("no signal" comparison); the owner chose this
+  # version for paper trading on 2026-10-20. Sized by risk_limits.yaml weekly_spread.
+  enabled: true
+  target_dte: 60
+  dte_tolerance: 7
+  long_delta: 0.50
+  short_delta: 0.20
+  time_exit_dte: 14
+  run_at: "14:30"
+  strike_band_low: 0.95
+  strike_band_high: 1.15
+
 execution:
   require_manual_confirmation: false  # true = ask a person "send this order? (yes/no)" before every opening order
   order_timeout_seconds: 20           # an unfilled order is cancelled after this long

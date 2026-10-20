@@ -155,6 +155,30 @@ class StrategySettings(_Strict):
         return sorted(set(v))
 
 
+class WeeklySpreadSettings(_Strict):
+    """Weekly SPY bull call spread, no market-timing signal (docs/research/spy_trend_preregistration.md, owner
+    decision 2026-10-20 to trade the no-signal version on paper). Off unless enabled."""
+    enabled: bool = False
+    target_dte: int = Field(default=60, ge=14, le=120)
+    dte_tolerance: int = Field(default=7, ge=0, le=21)
+    long_delta: float = Field(default=0.50, gt=0, lt=1)
+    short_delta: float = Field(default=0.20, gt=0, lt=1)
+    time_exit_dte: int = Field(default=14, ge=1, le=60)
+    run_at: str = "14:30"                 # Eastern; once a day from this time (before the 15:00 entry cutoff)
+    strike_band_low: float = Field(default=0.95, gt=0, le=1)
+    strike_band_high: float = Field(default=1.15, ge=1, le=2)
+
+    @model_validator(mode="after")
+    def _deltas(self) -> "WeeklySpreadSettings":
+        from datetime import time
+        time.fromisoformat(self.run_at)
+        if self.short_delta >= self.long_delta:
+            raise ValueError("short_delta must be below long_delta (a bull call spread)")
+        if self.time_exit_dte >= self.target_dte - self.dte_tolerance:
+            raise ValueError("time_exit_dte must be below the shortest entry DTE")
+        return self
+
+
 class ExecutionSettings(_Strict):
     require_manual_confirmation: bool = False
     order_timeout_seconds: float = Field(gt=0, le=300)
@@ -250,6 +274,12 @@ class MultiDayLimits(_Strict):
         return [str(d) for d in v]
 
 
+class WeeklySpreadLimits(_Strict):
+    """Risk pool of the weekly SPY call spread (owner decision 2026-10-20, paper)."""
+    per_trade_risk_pct: float = Field(gt=0, le=0.05)
+    max_open_positions: int = Field(ge=1, le=5)
+
+
 class RiskLimits(_Strict):
     reference_equity: float = Field(gt=0)
     per_trade_risk_pct: float = Field(gt=0, le=0.02)
@@ -279,6 +309,7 @@ class RiskLimits(_Strict):
     max_consecutive_execution_failures: int = Field(ge=1)
     approval_valid_seconds: float = Field(gt=0, le=300)
     multiday: MultiDayLimits
+    weekly_spread: WeeklySpreadLimits
 
     @model_validator(mode="after")
     def _consistent(self) -> "RiskLimits":
@@ -306,6 +337,7 @@ class Settings(_Strict):
     data_quality: DataQualitySettings
     pricing: PricingSettings
     strategy: StrategySettings
+    weekly_spread: WeeklySpreadSettings = WeeklySpreadSettings()
     execution: ExecutionSettings
     databento: DatabentoSettings
     schedule: ScheduleSettings

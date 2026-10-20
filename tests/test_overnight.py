@@ -17,7 +17,7 @@ from risk.overnight import assignment_risk, next_ex_dividend, third_friday
 from risk.positions import LegQuote, OptionLeg, Position, Portfolio
 from risk.risk_engine import approve
 from risk.state import Level, RiskStateStore
-from tests.test_risk_engine import NOW, QUOTES, S, ctx, leg
+from tests.test_risk_engine import NOW, QUOTES, S, ctx, leg, open_position
 
 EXP = date(2026, 11, 6)
 
@@ -39,23 +39,25 @@ def fly_request(rid, multi_day):
 
 # --- risk pool -------------------------------------------------------------------
 
-def test_multi_day_trade_uses_its_own_3pct_budget():
+def test_multi_day_trade_uses_its_own_pool():
     from risk.state import RiskStateStore
     from data.storage.db import MarketDataStore
     st = RiskStateStore(MarketDataStore(":memory:"))
-    same_day = approve(fly_request("a", False), ctx(st))
-    multi = approve(fly_request("b", True), ctx(st))
-    assert same_day.position.max_loss <= 0.005 * 20_000                                        # 0.5% of $20k = $100
-    assert multi.approved and multi.contracts > same_day.contracts
-    assert 0.005 * 20_000 < multi.position.max_loss <= 0.03 * 20_000                            # 3% of $20k = $600
-    assert multi.position.hold_overnight and not same_day.position.hold_overnight
+    full_same_day = Portfolio([open_position(f"p{i}", 770 + i, 771 + i, 1) for i in range(3)])
+    same_day = approve(fly_request("a", False), ctx(st, portfolio=full_same_day))
+    multi = approve(fly_request("b", True), ctx(st, portfolio=full_same_day))
+    assert not same_day.approved and "max_concurrent_positions" in same_day.reasons
+    assert multi.approved                                     # a full same-day pool doesn't block the multi-day pool
+    assert multi.position.max_loss <= 0.015 * 20_000                                          # 1.5% of $20k = $300
+    assert multi.position.hold_overnight
 
 
-def test_multi_day_limited_to_one_open_position():
+def test_multi_day_limited_to_three_open_positions():
     from risk.state import RiskStateStore
     from data.storage.db import MarketDataStore
     st = RiskStateStore(MarketDataStore(":memory:"))
-    d = approve(fly_request("c", True), ctx(st, portfolio=Portfolio([iron_fly()])))
+    flies = [iron_fly(pid=f"fly{i}") for i in range(3)]
+    d = approve(fly_request("c", True), ctx(st, portfolio=Portfolio(flies)))
     assert not d.approved and "max_concurrent_positions" in d.reasons
 
 

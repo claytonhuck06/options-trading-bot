@@ -4,8 +4,10 @@
 
 reference_equity: 20000.00            # hypothetical starting equity
 
-per_trade_risk_pct: 0.005             # 0.50% of start-of-day equity
-aggregate_planned_risk_pct: 0.025     # 2.50% across open trades
+# Owner decision 2026-10-20 (paper): every strategy gets the same risk, 1.5% per trade and up to 3 open
+# (4.5% per strategy). Raised from 0.5% / 2.5% so the weekly call spread (~$1,200 a contract) fits.
+per_trade_risk_pct: 0.015             # 1.50% of start-of-day equity
+aggregate_planned_risk_pct: 0.045     # 4.50% across open same-day trades
 daily_loss_limit_pct: 0.015           # 1.50% of start-of-day equity, plus the planned max loss of any open multi-day position
 daily_profit_stop_pct: 0.05           # 5.00% ceiling, not a target
 drawdown_warning_pct: 0.05            # 5% below equity high-water mark
@@ -27,7 +29,7 @@ max_holding_minutes: 120              # time exit
 mispricing_exit_z: 0.5                # close when the original mispricing has mostly disappeared
 
 # --- Portfolio exposure limits ---------------------------------------------
-max_net_delta_pct: 0.50               # |SPY-equivalent delta| x price, as a fraction of equity
+max_net_delta_pct: 0.75               # |SPY-equivalent delta| x price, as a fraction of equity (0.50 until 2026-10-20: three weekly call spreads carry ~0.70)
 max_net_vega_pct: 0.0025              # $ per 1 vol point, as a fraction of equity
 underlying_betas: {SPY: 1.0, QQQ: 1.2}   # correlation: exposure is measured in SPY terms
 stress_loss_pct_of_daily_allowance: 1.0  # worst historical stress loss may use at most this share of today's remaining loss allowance
@@ -45,11 +47,18 @@ approval_valid_seconds: 30            # a risk approval expires; each order need
 # Only positions opened by a multi-day strategy may be held overnight; every other
 # position still closes the same day. These limits form their own risk pool.
 multiday:
-  per_trade_risk_pct: 0.03            # up to 3% of start-of-day equity may be lost on one multi-day trade
-  max_open_positions: 1
+  per_trade_risk_pct: 0.015           # same as every strategy (owner 2026-10-20; was 3% x 1 open)
+  max_open_positions: 3
   close_days_before_expiry: 7         # never hold into an option's final week (assignment and pin risk)
   assignment_extrinsic_threshold: 0.05  # $/share: a short leg in the money with less time value than this is closed
   dividend_estimate: 1.90             # $/share, SPY quarterly dividend estimate (early-assignment check)
   ex_dividend_dates: []               # explicit SPY ex-dividend dates (YYYY-MM-DD); empty = third Friday of Mar/Jun/Sep/Dec
   open_settle_minutes: 5              # after the open, a late start or waking from sleep: wait this long for fresh quotes before treating old data as a failure
   gap_exit_slack: 0.25                # $/share extra allowed when closing a position that gapped past its stop
+
+# --- Weekly SPY call spread (owner decision 2026-10-20, paper trading) -----------
+# Its own risk pool, the same size as the others. Held for weeks (overnight), so it also uses the
+# multi-day expiry and early-assignment protections above.
+weekly_spread:
+  per_trade_risk_pct: 0.015           # the whole debit is the planned max loss
+  max_open_positions: 3

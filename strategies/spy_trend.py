@@ -135,15 +135,16 @@ class SpreadDecision:
 
 
 def build_call_spread(day: date, params: TrendParams, spot: float, chains: dict[date, list[ChainRow]], rate: float,
-                      deltas_cache: dict | None = None) -> SpreadDecision:
+                      deltas_cache: dict | None = None, risk_budget: float = REFERENCE_EQUITY * RISK_PER_SPREAD_PCT,
+                      dte_tolerance: int = DTE_TOLERANCE) -> SpreadDecision:
     """Apply C1.3–C1.7 for one day. The signal, the weekly limit and the 3-open limit live in the backtest."""
     def no(code: str, reason: str, **details) -> SpreadDecision:
         return SpreadDecision(day, params, None, reason, code, details)
 
     expiries = {exp: (exp - day).days for exp in chains}
-    exp = select_expiry(expiries, params.target_dte)
+    exp = select_expiry(expiries, params.target_dte, dte_tolerance)
     if exp is None:
-        return no("no_expiry", f"no expiry within {DTE_TOLERANCE} days of {params.target_dte} days out")
+        return no("no_expiry", f"no expiry within {dte_tolerance} days of {params.target_dte} days out")
     dte = expiries[exp]
     rows = chains[exp]
     key = (day, exp)
@@ -170,9 +171,9 @@ def build_call_spread(day: date, params: TrendParams, spot: float, chains: dict[
     width = sc[0] - lc[0]
     if debit <= 0 or debit >= width:
         return no("impossible_price", f"debit ${debit:.2f} is outside 0 to the ${width:g} width", debit=debit)
-    contracts = math.floor(REFERENCE_EQUITY * RISK_PER_SPREAD_PCT / (debit * MULTIPLIER))
+    contracts = math.floor(risk_budget / (debit * MULTIPLIER))
     if contracts < 1:
-        return no("too_small", f"one spread costs ${debit * MULTIPLIER:,.0f}, over the 1% limit")
+        return no("too_small", f"one spread costs ${debit * MULTIPLIER:,.0f}, over the ${risk_budget:,.0f} limit")
     spread = CallSpread(day, exp, dte, long_leg, short_leg, debit, contracts)
     return SpreadDecision(day, params, spread, "built", "built",
                           {"fallback_deltas": ed.fallbacks, "dividend_yield": ed.dividend_yield})
