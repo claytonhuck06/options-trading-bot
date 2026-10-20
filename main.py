@@ -632,6 +632,39 @@ def cmd_after_close(settings) -> int:
     return 0
 
 
+def cmd_midday(settings) -> int:
+    """Midday check-in to the phone: jobs alive, data fresh, screener so far, trades so far. Read-only."""
+    from datetime import datetime
+
+    from core.config import PROJECT_ROOT
+    from data.storage.db import MarketDataStore
+    from execution.broker import ReadOnlyBroker
+    from monitoring import alerts
+    from monitoring.daily import build_midday
+    from research.pricing_report import EASTERN
+
+    today = datetime.now(EASTERN).date()
+    try:
+        if today not in ReadOnlyBroker(settings, load_alpaca_credentials(settings)).trading_days(today, today):
+            print("Not a trading day — no check-in.")
+            return 0
+    except Exception as exc:                       # can't tell; send anyway, an unreachable broker is worth knowing
+        print(f"Broker not reachable ({type(exc).__name__}).")
+    # A job started before the lock existed holds none, so also accept recent signs of life.
+    trader_log = PROJECT_ROOT / "logs" / f"trader_{datetime.now():%Y-%m-%d}.log"
+    trader_alive = trader_log.exists() and datetime.now().timestamp() - trader_log.stat().st_mtime < 300
+    store = MarketDataStore(PROJECT_ROOT / settings.storage.sqlite_path)
+    try:
+        s = build_midday(store.conn, today, is_running("collector"), is_running("trader") or trader_alive)
+    finally:
+        store.close()
+    print(s.title)
+    print(s.text())
+    if settings.alerts.daily_summary:
+        alerts.send(s.title, s.text(), "high" if s.problems else "low", ["warning"] if s.problems else ["mag"])
+    return 0
+
+
 def cmd_storage(settings, action: str, day: str | None) -> int:
     import sqlite3
     import shutil
@@ -717,7 +750,7 @@ def cmd_backtest(settings, start: str | None, end: str | None, walk: str | None,
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="options-quant")
-    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study", "opra-widen", "backtest", "after-close", "storage", "notify", "running"], nargs="?", default="config")
+    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study", "opra-widen", "backtest", "after-close", "storage", "notify", "running", "midday"], nargs="?", default="config")
     parser.add_argument("--env", help="development | backtest | observation | paper | live")
     parser.add_argument("--once", action="store_true", help="collect: run a single cycle")
     parser.add_argument("--cycles", type=int, help="collect: stop after N cycles")
@@ -770,6 +803,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_databento_spend(settings)
         if args.command == "opra-history":
             return cmd_opra_history(settings, args.weeks)
+        if args.command == "midday":
+            return cmd_midday(settings)
         if args.command == "running":
             return 0 if is_running(args.action) else 1
         if args.command == "trade":

@@ -25,7 +25,7 @@ Options Quant runs on a Mac, unattended, every trading day:
 3. **Scans** for defined-risk vertical spreads where the market price is far from fair value, measured against prices you could actually trade at, not mid-prices.
 4. **Checks risk** on every idea before it can trade: position sizing, daily loss limits, stress tests calibrated on 10 years of history, a 4-level kill switch, and an exit plan written before entry.
 5. **Trades on paper**, sending each spread as a single multi-leg order, then reconciling fills against the broker and recovering cleanly after crashes or the Mac sleeping.
-6. **Reports** a daily summary and urgent alerts to a phone via [ntfy](https://ntfy.sh) (free).
+6. **Reports** a midday check-in, a daily summary, and urgent alerts to a phone via [ntfy](https://ntfy.sh) (free).
 
 ```mermaid
 flowchart LR
@@ -153,7 +153,7 @@ A second job (`com.optionsquant.trader`) runs `scripts/run_trader.sh` at 8:20 a.
 
 ### Phone alerts and the daily summary
 
-Alerts go through ntfy (free). Install the **ntfy** app and subscribe to the topic in `.env` (`OPTIONS_QUANT_NTFY_TOPIC`; keep it private, because anyone with the name can read the alerts). Urgent events are pushed at once: kill switch, early assignment, a position closed after an overnight gap, a halt at startup, a failed paper demo, the collector or trader stopping, missed trading days. Trades arrive in one summary after the close: a third job (`com.optionsquant.afterclose`, 3:20 p.m. Central) runs `main.py after-close`, which also cleans up old live data (newest 5 days full detail, then one quote per minute, archived to compressed files after 30 days).
+Alerts go through ntfy (free). Install the **ntfy** app and subscribe to the topic in `.env` (`OPTIONS_QUANT_NTFY_TOPIC`; keep it private, because anyone with the name can read the alerts). Urgent events are pushed at once: kill switch, early assignment, a position closed after an overnight gap, a halt at startup, a failed paper demo, the collector or trader stopping, missed trading days. A fourth job (`com.optionsquant.midday`, 12:00 p.m. Central) sends a short check-in: are the collector and trader alive, is the data fresh, what the screener has checked so far and why nothing passed, and any trades. Trades arrive in one summary after the close, which also reports the screener's day and how many days in a row nothing has passed: a third job (`com.optionsquant.afterclose`, 3:20 p.m. Central) runs `main.py after-close`, which also cleans up old live data (newest 5 days full detail, then one quote per minute, archived to compressed files after 30 days).
 
 ### Stopping trading immediately
 

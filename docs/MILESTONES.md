@@ -162,6 +162,9 @@ Requirement: orders placed, modified, cancelled, filled and reconciled correctly
       cycle instead of reusing ones tied to the old network. One copy per job is enforced by a lock file the OS
       releases on exit or crash (`main.py running collector|trader`), replacing a process-name search that
       mistook unrelated commands for a running collector and blocked restarts
+- [x] Phone updates (2026-10-20): the after-close summary now reports the screener (spreads checked, how many passed,
+      top rejection reasons, days in a row with nothing passing); a midday check-in (12:00 CT, `main.py midday`) says
+      whether the collector and trader are alive and the data fresh
 - [x] Morning check before the open (trader now starts 8:20 CT): unknown orders settled, overnight assignments
       recognised, broker vs our records, positions carried into the day, missed trading days
 - [x] Walk-forward testing (`backtesting/walk_forward.py`) and the standard report (`backtesting/metrics.py`):

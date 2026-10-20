@@ -11,7 +11,7 @@ from data.models import OptionQuote, QualityResult, UnderlyingQuote
 from data.storage.db import MarketDataStore
 from data.storage.retention import archive_day, data_days, restore_day, run_retention, thin_day
 from monitoring import alerts
-from monitoring.daily import build_summary, missed_days
+from monitoring.daily import build_midday, build_summary, missed_days, screener_lines
 
 
 # --- alerts ----------------------------------------------------------------------------
@@ -86,6 +86,50 @@ def test_summary_flags_missing_collector_and_trader():
 def test_days_before_the_collector_existed_are_not_missed():
     store = _store_with([date(2026, 10, 20)])
     assert missed_days(store.conn, [date(2026, 10, 16), date(2026, 10, 19), date(2026, 10, 20), DAY]) == [DAY]
+
+
+def _candidates(store, day, rows):
+    """rows: (run_id, eligible, reasons list)"""
+    store.conn.execute("PRAGMA foreign_keys=OFF")              # no pricing_runs needed for these checks
+    for run, ok, reasons in rows:
+        store.conn.execute("INSERT INTO candidate_trades(run_id, as_of, structure, direction, option_type, expiration, "
+                           "anchor_symbol, long_symbol, long_price, short_symbol, short_price, width, contracts, eligible, "
+                           "reasons, explanation) VALUES (?,?,'debit','bullish','call','2026-11-20','A','L',1,'S',0.5,1,1,?,?,'')",
+                           (run, f"{day}T15:00:00+00:00", int(ok), json.dumps(reasons)))
+    store.conn.commit()
+
+
+def test_summary_says_what_the_screener_saw_and_why_nothing_passed():
+    store = _store_with([DAY])
+    _candidates(store, date(2026, 10, 20), [(1, False, ["reward_too_small"])])
+    _candidates(store, DAY, [(2, False, ["thin_quote", "no_edge_at_executable_prices"]),
+                             (2, False, ["no_edge_at_executable_prices"]), (3, False, ["mystery_rule"])])
+    text = build_summary(store.conn, DAY, None, [DAY]).text()
+    assert "Screener: 3 spreads checked in 2 scans, 0 passed every rule" in text
+    assert "top reasons: no edge at real prices (2)" in text and "mystery rule (1)" in text
+    assert "2 screener days in a row with nothing passing" in text
+
+
+def test_a_passing_spread_ends_the_streak():
+    store = _store_with([DAY])
+    _candidates(store, date(2026, 10, 20), [(1, False, ["reward_too_small"])])
+    _candidates(store, DAY, [(2, True, []), (2, False, ["thin_quote"])])
+    lines = screener_lines(store.conn, DAY)
+    assert lines[0].endswith("1 passed every rule") and not any("in a row" in l for l in lines)
+    assert screener_lines(MarketDataStore(":memory:").conn, DAY) == ["Screener: no spreads built today"]
+
+
+def test_midday_check_in():
+    store = _store_with([])
+    now = datetime(2026, 10, 21, 17, 0, tzinfo=timezone.utc)
+    store.conn.execute("INSERT INTO collection_cycles(underlying, feed, started_at, status) VALUES ('SPY','x',?, 'ok')",
+                       ((now - timedelta(minutes=1)).isoformat(),))
+    ok = build_midday(store.conn, DAY, collector_running=False, trader_running=True, now=now)
+    assert ok.problems == [] and ok.title == "Bot midday Wed Oct 21: OK"      # fresh data proves the collector is alive
+    assert "Trades so far: 0 opened" in ok.text()
+    stale = build_midday(store.conn, DAY, collector_running=True, trader_running=False, now=now + timedelta(minutes=30))
+    assert any("no fresh data" in p for p in stale.problems) and any("Trader is not running" in p for p in stale.problems)
+    assert "NEEDS ATTENTION" in stale.title
 
 
 # --- storage retention ------------------------------------------------------------------------
