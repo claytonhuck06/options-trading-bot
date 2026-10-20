@@ -245,3 +245,25 @@ straddle is capped at **4%**, so a straddle can open only while ≤ 1% of condor
 `docs/research/vol_forecast_report_2026-10-20.md`: in discovery, M2 QLIKE 0.8823 vs M0 (VIX) 0.8809, one-sided DM
 p = 0.54. Under F1.2 the straddle (F1.5) and the condor gate (F1.4) are **no-go** and won't be backtested. Sections
 B–E (plain condor) are unaffected and continue. Any new straddle idea would be a new, separately pre-registered test.
+
+### Amendment 3 (2026-10-20): settings with too few trades; locked quotes
+
+*Written after the Phase 2 builder report (entry side only: which days a condor can be built, credits at entry)
+and before any exit, mark or profit/loss was computed.*
+
+The builder report (`docs/research/condor_build_report_2026-10-20.md`) shows that some settings can rarely or
+never be entered: every 10-delta setting fails the 25% minimum credit on all days, and 16-delta settings were
+buildable on only 45–60 days in 2016–2021. The original rules didn't say how such settings count as neighbours,
+so before Phase 3:
+
+1. **No score without trades.** A setting with fewer than 60 discovery trades gets no score (D3 step 3 already
+   stops it from being chosen). In the smoothed score (D3 step 2), it's left out of the average instead of being
+   counted as zero.
+2. **Bar 6 (not a lucky setting)** applies to the grid neighbours (Δ, DTE or W one step away) that have **at least
+   30 discovery trades**. If fewer than **2** neighbours qualify, bar 6 **fails**, because robustness can't be shown.
+3. **Locked quotes** (bid = ask > 0) make up 4–16% of out-of-the-money quotes in 2016–2020 and under 0.5% from
+   2021. They look like a rounding quirk in the older files. They stay rejected at entry (C1.6). For open
+   positions, a leg with a locked, crossed or missing quote fails the daily data check, so the last valid mark is
+   carried forward (section B).
+4. Nothing else changes. The 25% credit minimum stays as written, even though it blocks most entries at 10 and 16
+   delta. That's reported, not adjusted.

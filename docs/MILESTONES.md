@@ -205,7 +205,17 @@ The mispricing strategy above keeps running unchanged while the condor is resear
       VIX already contains what recent movement, down days and FOMC/CPI dates tell you. Per the pre-registration the
       straddle and the condor forecast gate are no-go; the plain condor test continues. 2022+ (information only):
       slightly better than VIX, p = 0.09, not enough and not usable. Report: docs/research/vol_forecast_report_2026-10-20.md
-- [ ] Phase 2: condor and straddle builder · Phase 3: backtest · Phase 4: owner go/no-go
+- [x] Phase 2 (2026-10-20): condor builder `strategies/iron_condor.py` (own BSM deltas from mid IV, dividend from
+      put-call parity, FRED rates from before the day; 8 tests) + `main.py vol-data condors` →
+      docs/research/condor_build_report_2026-10-20.md. Findings (entry side only, no P&L):
+      * 10-delta: never buildable (credit always under 25% of width). 16-delta: rare (45 DTE/$5: 138 days, almost
+        none 2016–2018 when volatility was low). 20-delta: common (45 DTE/$5: 519 days, a condor available in 240 of
+        417 weeks). So the test is effectively about 20-delta condors
+      * "Wing strike not listed" is real: older weekly expiries list far strikes only every $2.50–$5
+      * Older files (2016–2020) have 4–16% locked quotes (bid = ask), likely a rounding quirk; spreads otherwise
+        realistic (2–3¢ on OTM puts). Locked legs are rejected, which costs trades but can't flatter results
+      * Amendment 3 written before any P&L: how thin settings count in smoothing and bar 6
+      * Straddle builder not built (forecast failed its bar in Phase 1b) · Phase 3: backtest · Phase 4: owner go/no-go
 
 ## Phase 7 — Backtesting (requires suitable historical quote data)
 ## Phase 8 — Observation mode, then 60–90+ days of paper trading
