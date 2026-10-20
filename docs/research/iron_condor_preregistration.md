@@ -127,4 +127,100 @@ The report says which bars failed and by how much, and nothing gets built for tr
 
 ## F. Amendments
 
-*None yet.*
+### Amendment 1 (2026-10-20): becomes a volatility strategy (condor + long straddle, chosen by a volatility forecast)
+
+*Made at the owner's request, still before any condor, straddle or volatility data was downloaded, computed or
+examined. No results existed when this amendment was written.*
+
+The condor rules in sections B–E stay exactly as they are. This amendment adds three things: (1) a volatility
+forecast, (2) a long straddle for when the forecast says options are **too cheap**, and (3) an optional forecast
+gate on the condor for when it says options are **too expensive**.
+
+#### F1.1 What the forecast has to beat
+
+The options market already makes its own volatility forecast: the implied volatility (IV) built into option
+prices. A forecast is only useful for trading if it predicts **future realized volatility better than IV does**.
+Being accurate isn't enough on its own. So the forecast is judged against IV, not against nothing.
+
+#### F1.2 The forecast model (HAR-RV with implied volatility)
+
+The model is the standard, widely replicated approach in the research literature: the *heterogeneous
+autoregressive model of realized volatility* (Corsi, 2009). Volatility clusters, meaning calm periods tend to stay
+calm and wild ones stay wild, so recent daily, weekly and monthly realized volatility predict the next month
+well. Implied volatility and a "down days raise volatility" term are added, because published studies find each
+adds information.
+
+- **Target:** SPY realized volatility over the next 21 trading days, from the sum of squared 5-minute returns
+  (regular hours) plus the squared overnight return, annualised. This uses the minute bars already stored in
+  `history.db`, converted to raw prices with `raw_factors`.
+- **Inputs, all known at the previous day's close:**
+  - log realized volatility over the last 1, 5 and 22 trading days
+  - log VIX (previous close)
+  - the size of the most recent day's return if it was negative (otherwise 0)
+  - the number of FOMC statements and CPI releases in the next 21 trading days
+- **Fit:** ordinary least squares on the logs, refit at the start of each month on all data before that month
+  (expanding window), with the first fit using ≥ 2 years. Forecasts are always out-of-sample. The minute bars start in 2016, so
+  the first forecast is for January 2018. Straddle and gated-condor trades therefore start in 2018, which leaves
+  4 years of discovery (2018–2021) and meets B's minimum.
+- **Benchmarks:** M0 = VIX alone (scaled to realized volatility by the same expanding regression);
+  M1 = HAR-RV without the implied-volatility, return and event terms; M2 = the full model above.
+- **Model bar (must hold, or the forecast isn't used):** in the discovery period, M2's out-of-sample QLIKE loss
+  is lower than M0's, with a Diebold-Mariano test (Newey-West, 21 lags) one-sided p < 0.05. If M2 fails this,
+  the forecast adds nothing beyond what the market already prices in. In that case the straddle and the condor
+  gate are reported as "no-go", and the plain condor test (sections B–E) continues unchanged.
+- Confirmation-period forecast quality is reported but can't be used to change the model.
+
+#### F1.3 The signal
+
+**Ratio = forecast realized volatility ÷ implied volatility of the trade's own expiry** (the at-the-money IV from
+the chain, from the project's pricing engine, at the entry snapshot).
+
+- **Low ratio** (options look expensive): condor territory.
+- **High ratio** (options look cheap): straddle territory.
+- Options usually price in more movement than happens, so a ratio of 1.0 already means "unusually cheap".
+
+#### F1.4 Condor gate (one extra setting on the chosen condor)
+
+After the condor setting is chosen exactly as in D3 (gate off), the gate is tried on that setting only. With the
+gate on, the condor enters only if the ratio is ≤ g, with g ∈ {0.70, 0.80, 0.90}. The gate value with the best
+discovery score (D3 step 1) is adopted only if it beats "gate off" in discovery and the gated version still passes
+bars 1–7. Otherwise the gate stays off. This is chosen in discovery and then run once on confirmation.
+
+#### F1.5 Long straddle rules
+
+- **Structure:** buy one at-the-money call and one at-the-money put, same strike, same expiry. The strike is the
+  one closest to the forward price. Max loss = the debit paid + fees, and no short legs exist.
+- **Entry:** checked at each daily snapshot. Enter if the ratio ≥ s, there's no straddle already open, the event
+  filter is passed (C1.8), and the quote checks pass (C1.6). Expiry is chosen as in C1.3.
+- **Price:** debit = ask(call) + ask(put). Exit value = bid(call) + bid(put). Same fees, cost stress and
+  optimistic cases as C3.
+- **Exits, checked daily in this order:** stop when value ≤ (1 − L) × debit; profit target when
+  value ≥ (1 + q) × debit; time exit after H trading days; hard exit at 7 days to expiry; the early-assignment
+  guard doesn't apply (no short legs).
+- **Size:** contracts = floor(straddle risk budget ÷ (debit × 100)). The full debit counts as risk. If that's 0,
+  no entry. (See owner decision 6 below.)
+
+**Straddle grid: 48 combinations**
+| Setting | Values |
+|---|---|
+| Target DTE | 14, 30 |
+| Entry ratio s | 1.00, 1.10, 1.20 |
+| Profit target q | 25%, 50% |
+| Stop L | 25%, 50% of debit |
+| Time exit H | 5, 10 trading days |
+
+Settings are chosen exactly as in D3, with **at least 30 discovery trades** required. The same 7 bars apply
+(E1–E7), where "planned max loss" is the full debit plus fees. If the straddle rarely triggers, it fails the
+trade-count requirement. That's a valid finding, not something to fix by loosening s.
+
+#### F1.6 Combined portfolio
+
+If both the condor and the straddle pass on their own, they're run together on the confirmation period under the
+shared risk caps. The combination must also pass bar 4 (drawdown < 10%) and bar 5 (crash periods).
+
+#### F1.7 Owner decision 6: straddle size (pending)
+
+An at-the-money 30-day SPY straddle costs about $2,000–3,500 per contract, and the whole debit is at risk, so the
+1% condor budget ($1,000) can't buy even one. **Proposed:** a straddle may use up to **3%** of equity (the
+existing multi-day allowance), one straddle at a time. Total planned risk across all open condors plus a
+straddle is capped at **4%**, so a straddle can open only while ≤ 1% of condor risk is open.

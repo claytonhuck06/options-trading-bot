@@ -1,4 +1,4 @@
-# Iron Condor Strategy — Project Plan
+# Volatility Strategy (Iron Condor + Long Straddle) — Project Plan
 
 *Written 2026-10-20. Nothing in this plan has been built yet. Paper trading only; not investment advice.*
 
@@ -11,6 +11,12 @@ question to a simpler one, which the existing system is already well equipped to
 The same rules as before apply: tell the truth instead of chasing a nice-looking result, use only data available
 at the time of each trade, price fills at the real bid/ask, write every rule and pass/fail bar *before* testing,
 and refuse to trade when the evidence isn't there.
+
+**Amendment 1 (2026-10-20):** at the owner's request, this is now a *volatility* strategy. A volatility forecast
+(HAR-RV with implied volatility) is compared with what options are pricing in. When options look expensive, the
+system uses the condor; when they look cheap, it buys a straddle (an at-the-money call plus put, which profits from
+a big move either way). The forecast must first prove it beats the market's own forecast (VIX) out-of-sample, or
+it isn't used. Exact rules: `docs/research/iron_condor_preregistration.md`, section F.
 
 ---
 
@@ -150,6 +156,11 @@ Requirement: section 9 answered by the owner; strategy rules, grid, and pass/fai
 Requirement: 10+ years of daily SPY chains loaded, checked, and spot-checked; VIX, FOMC, and CPI tables
 filled; a data quality report written. Cost: $0.
 
+### Phase 1b — Volatility forecast (Amendment 1)
+Requirement: realized volatility computed from stored SPY minute bars; VIX/VIX9D/VIX3M history loaded (free, CBOE);
+HAR-RV-IV model fitted out-of-sample; forecast report comparing M2 vs M0 vs M1 against the model bar. If the bar
+fails, the straddle and condor gate are no-go and the plain condor continues.
+
 ### Phase 2 — Condor builder (offline)
 Requirement: given any historical day, it builds the condor the rules call for, or explains in plain English why
 not (no 16-delta strike, credit too small, event inside window, IV Rank too low). Tests cover strike selection,
@@ -198,6 +209,7 @@ in code until the owner explicitly approves a separate change.
 3. **Pass/fail bars:** accepted as written (exact tests in the pre-registration).
 4. **Databento cap:** up to $20 in Phase 5 without asking again.
 5. **Underlyings:** SPY only.
+6. **Straddle size (pending):** proposed up to 3% per straddle, one at a time, 4% total across all volatility trades.
 
 Exact rules, grid and bars: `docs/research/iron_condor_preregistration.md` (+ `iron_condor_rules.yaml`).
 

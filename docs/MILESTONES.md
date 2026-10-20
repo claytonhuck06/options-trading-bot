@@ -187,8 +187,11 @@ Requirement: orders placed, modified, cancelled, filled and reconciled correctly
 The mispricing strategy above keeps running unchanged while the condor is researched.
 - [x] Phase 0 (2026-10-20): owner decisions recorded; rules, 162-combination grid, selection method and
       7 pass/fail bars pre-registered in `docs/research/iron_condor_preregistration.md` before any condor data was seen
+- [x] Amendment 1 (2026-10-20, before any data seen): volatility forecast (HAR-RV + IV) chooses condor vs. long straddle;
+      forecast must beat VIX out-of-sample first. Straddle size pending owner decision 6
 - [ ] Phase 1: free daily SPY option chains (10+ years), VIX, FOMC and CPI calendars, data quality report
-- [ ] Phase 2: condor builder · Phase 3: backtest · Phase 4: owner go/no-go
+- [ ] Phase 1b: volatility forecast and forecast report
+- [ ] Phase 2: condor and straddle builder · Phase 3: backtest · Phase 4: owner go/no-go
 
 ## Phase 7 — Backtesting (requires suitable historical quote data)
 ## Phase 8 — Observation mode, then 60–90+ days of paper trading

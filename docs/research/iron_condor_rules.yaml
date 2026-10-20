@@ -69,3 +69,33 @@ pass_bars:
 databento:
   phase: 5
   budget_usd_without_asking: 20.0
+
+# --- Amendment 1 (2026-10-20, before any data examined): volatility forecast + long straddle -------
+volatility_forecast:
+  target: rv_21d                      # next 21 trading days; 5-min squared returns + squared overnight return, annualised
+  model: har_rv_iv                    # log-linear OLS
+  inputs: [log_rv_1d, log_rv_5d, log_rv_22d, log_vix_prev_close, neg_return_prev_day, events_next_21d]
+  refit: monthly_expanding
+  min_fit_years: 2
+  benchmarks: {M0: vix_only, M1: har_rv_only}
+  model_bar: {loss: qlike, beat: M0, test: diebold_mariano, newey_west_lags: 21, max_p_one_sided: 0.05, period: discovery}
+
+signal:
+  ratio: forecast_rv / atm_iv_of_trade_expiry
+
+condor_gate:                          # tried only on the chosen condor setting
+  values: [null, 0.70, 0.80, 0.90]    # null = gate off (default unless a value beats it and passes all bars)
+
+straddle:
+  strike: nearest_forward
+  max_open: 1
+  grid:                               # 2 x 3 x 2 x 2 x 2 = 48
+    target_dte: [14, 30]
+    entry_ratio_min: [1.00, 1.10, 1.20]
+    profit_target_pct: [0.25, 0.50]
+    stop_pct_of_debit: [0.25, 0.50]
+    time_exit_trading_days: [5, 10]
+  min_discovery_trades: 30
+  sizing:                             # owner decision 6 — PENDING; proposed values
+    risk_pct: 0.03
+    total_vol_strategy_risk_cap_pct: 0.04
