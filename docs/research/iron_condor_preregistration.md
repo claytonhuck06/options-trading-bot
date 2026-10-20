@@ -224,3 +224,18 @@ An at-the-money 30-day SPY straddle costs about $2,000–3,500 per contract, and
 1% condor budget ($1,000) can't buy even one. **Proposed:** a straddle may use up to **3%** of equity (the
 existing multi-day allowance), one straddle at a time. Total planned risk across all open condors plus a
 straddle is capped at **4%**, so a straddle can open only while ≤ 1% of condor risk is open.
+
+### Amendment 2 (2026-10-20): forecast implementation details
+
+*Written before the forecast was run on real data. No forecast results existed at this point.*
+
+1. **Adjusted, not raw, prices for realized volatility.** F1.2 said minute bars would be converted to raw prices.
+   That was a mistake: on a raw price series an ex-dividend drop shows up as a fake move. Returns are computed from
+   the stored dividend-adjusted bars instead. Raw prices are still used wherever SPY is compared with strikes.
+2. **Bias correction.** The models are fitted on logs, so each forecast is converted back with the standard
+   log-normal correction exp(2·(fit + s²/2)), where s² is the fit's residual variance. It's applied identically to
+   M0, M1 and M2.
+3. **First fit.** Forecasts start in January 2018 and the first fit uses all rows whose 21-day outcome had ended
+   by then (data from January 2016, i.e. two years of data, about 23 months of finished outcomes).
+4. **Events counted:** scheduled FOMC statements (including the scheduled-then-cancelled March 2020 meeting) and
+   CPI releases, which are published in advance. Unscheduled meetings are excluded because they weren't known ahead of time.
