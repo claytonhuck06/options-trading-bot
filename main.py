@@ -797,6 +797,15 @@ def cmd_vol_data(settings, action: str, folder: str | None) -> int:
             finally:
                 history.close()
             print(f"{'GO' if passed else 'NO-GO'}. Report written: {path.relative_to(PROJECT_ROOT)}")
+        elif action == "monthly-trend":
+            from research.monthly_trend import run as run_monthly
+            history = open_history(PROJECT_ROOT / settings.storage.history_path)
+            try:
+                path, passed = run_monthly(history, PROJECT_ROOT / "docs" / "research", date.today(),
+                                           PROJECT_ROOT / "data" / "storage" / "studies")
+            finally:
+                history.close()
+            print(f"{'GO' if passed else 'NO-GO'}. Report written: {path.relative_to(PROJECT_ROOT)}")
         elif action == "condors":
             from research.condor_build_report import write_report as write_condor_report
             history = open_history(PROJECT_ROOT / settings.storage.history_path)
@@ -835,7 +844,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("action", nargs="?", default="status",
                         help="killswitch: status | stop | ack-warning | reset; storage: status | cleanup | restore; "
                              "running: collector | trader (exit 0 if that job is running); "
-                             "vol-data: status | fetch | load | report | forecast | condors | backtest | trend")
+                             "vol-data: status | fetch | load | report | forecast | condors | backtest | trend | monthly-trend")
     parser.add_argument("--path", help="vol-data load: folder of OptionsDX files (.txt/.csv/.zip)")
     parser.add_argument("--authorization", help="killswitch reset: the exact authorization phrase")
     parser.add_argument("--from", dest="date_from", help="opra-widen: first day YYYY-MM-DD")
