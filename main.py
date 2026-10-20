@@ -28,6 +28,7 @@ Commands:
         --grid strategy.KEY=V1,V2,...        Candidate settings the walk-forward chooses between.
     python main.py overnight [refresh|fetch|liquid]  Overnight-drift stock screener + walk-forward test (free daily bars).
     python main.py overnight-basket pick|buy|sell|status   Paper overnight share basket (buy at close, sell at open).
+    python main.py spike-short [fetch]  Short-the-small-stock-spike backtest, shortable stocks only (free daily bars).
     python main.py momentum plan|rebalance|status          Paper dual momentum (top 2 of 5 ETFs, monthly).
     python main.py after-close              Daily summary pushed to the phone, then storage cleanup (scheduled).
     python main.py storage status|cleanup|restore [--date D]   Live-data storage: sizes, cleanup now, restore a day.
@@ -1026,6 +1027,28 @@ def cmd_momentum(settings, action: str) -> int:
     return 2
 
 
+def cmd_spike_short(settings, action: str) -> int:
+    """Short-the-spike backtest: 'fetch' downloads daily bars (free), anything else (re)builds the report."""
+    from datetime import date
+
+    from core.config import PROJECT_ROOT
+    from core.secrets import load_alpaca_credentials
+    from research.spike_short import download, last_completed_day, open_db, run
+
+    conn = open_db(PROJECT_ROOT / "data" / "storage" / "studies" / "spike_bars.db")
+    try:
+        have = conn.execute("SELECT value FROM meta WHERE key='end'").fetchone()
+        if action == "fetch" or have is None:
+            download(load_alpaca_credentials(settings), conn, last_completed_day())
+            if action == "fetch":
+                return 0
+        path, go = run(conn, PROJECT_ROOT / "docs" / "research", date.today())
+    finally:
+        conn.close()
+    print(f"{'GO' if go else 'NO-GO'}. Report written: {path.relative_to(PROJECT_ROOT)}")
+    return 0
+
+
 def cmd_overnight_basket(settings, action: str) -> int:
     """Overnight share basket on the PAPER account: pick | buy | sell | status (execution/overnight_basket.py)."""
     import time as _t
@@ -1143,7 +1166,7 @@ def cmd_overnight_basket(settings, action: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="options-quant")
-    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study", "opra-widen", "backtest", "after-close", "storage", "notify", "running", "midday", "vol-data", "overnight", "overnight-basket", "momentum"], nargs="?", default="config")
+    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study", "opra-widen", "backtest", "after-close", "storage", "notify", "running", "midday", "vol-data", "overnight", "overnight-basket", "momentum", "spike-short"], nargs="?", default="config")
     parser.add_argument("--env", help="development | backtest | observation | paper | live")
     parser.add_argument("--once", action="store_true", help="collect: run a single cycle")
     parser.add_argument("--cycles", type=int, help="collect: stop after N cycles")
@@ -1205,6 +1228,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_vol_data(settings, args.action, args.path)
         if args.command == "overnight":
             return cmd_overnight(settings, args.action)
+        if args.command == "spike-short":
+            return cmd_spike_short(settings, args.action)
         if args.command == "overnight-basket":
             return cmd_overnight_basket(settings, args.action)
         if args.command == "momentum":

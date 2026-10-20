@@ -126,4 +126,6 @@ any bar fails; the report says which and why.
 
 ## Amendments
 
-*(none yet)*
+**2026-10-20, during the download, before any price data was stored (no results seen).** Alpaca's delisted list
+contains placeholder symbols such as `0029900E0` that its price service rejects. Only symbols of 1–5 capital
+letters are kept (this also covers the "." and "/" rule in A). Nothing else changes.
