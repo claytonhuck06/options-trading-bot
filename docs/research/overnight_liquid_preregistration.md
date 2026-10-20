@@ -41,3 +41,12 @@ fails, and the overnight idea is closed unless the owner asks for something new.
 
 **Information only (cannot change the verdict):** the same test with a **$500 million** floor (which mixes the
 0.02% and 0.05% tiers), to show how sensitive the result is to where the line is drawn.
+
+---
+
+## Amendments
+
+**2026-10-20, after the results were seen.** The rules allowed the top-40 basket to hold fewer names when not
+enough qualified, but said nothing about the top-20 basket. In 2024 only 18 names qualified, so the top-20 basket
+held 18 that year. The code treated this like the top-40 case (reported, not a data-check failure). It can't
+change the verdict: the test is already NO-GO on bars 3 and 7, which don't depend on that year's count.
