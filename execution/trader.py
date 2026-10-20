@@ -69,9 +69,10 @@ class CycleReport:
 
 class TradingSession:
     def __init__(self, settings: Settings, store: MarketDataStore, broker: BrokerAPI,
-                 now=lambda: datetime.now(timezone.utc), sleep=_time.sleep, source=None, basket=None):
+                 now=lambda: datetime.now(timezone.utc), sleep=_time.sleep, source=None, basket=None, momentum=None):
         self.s, self.store, self.broker = settings, store, broker
         self.basket = basket                     # overnight share basket (execution/overnight_basket.py), same account
+        self.momentum = momentum                 # monthly dual momentum ETFs (execution/dual_momentum_paper.py), same account
         self.source = source                     # live market data for the weekly spread (outside the collector's range)
         self._live_symbols: set[str] = set()     # contracts quoted live instead of from the collector's database
         self._live_cache: dict[str, LegQuote] = {}
@@ -142,15 +143,25 @@ class TradingSession:
         result = price_snapshot(snap, self.s.pricing, rate_for)
         return result, save_pricing(self.store, result)
 
+    def _share_books(self) -> tuple[dict[str, int], set[str]]:
+        """Shares and open orders of the share strategies in this account (overnight basket, dual momentum)."""
+        held: dict[str, int] = {}
+        orders: set[str] = set()
+        for book in (self.basket, self.momentum):
+            if book is not None:
+                h, o = book.expectations(self.broker)
+                for sym, q in h.items():
+                    held[sym] = held.get(sym, 0) + q
+                orders |= o
+        return held, orders
+
     def _expected_extras(self, assignment_shares: int) -> tuple[dict[str, int] | None, set[str]]:
         """Shares and open orders that belong to us but not to the options book: assignment shares being
-        unwound, and the overnight basket's holdings and its auction orders."""
+        unwound, and the share strategies' holdings and orders."""
         hedge = {self.underlying: assignment_shares} if assignment_shares else {}
-        orders: set[str] = set()
-        if self.basket is not None:
-            held, orders = self.basket.expectations(self.broker)
-            for sym, q in held.items():
-                hedge[sym] = hedge.get(sym, 0) + q
+        held, orders = self._share_books()
+        for sym, q in held.items():
+            hedge[sym] = hedge.get(sym, 0) + q
         return hedge or None, orders
 
     # --- lifecycle -------------------------------------------------------------------
@@ -312,7 +323,8 @@ class TradingSession:
         return sum(b["shares"] for b in self.state._get("assignment_batches", []))
 
     def _handle_assignments(self, positions: list[Position], broker_positions, notes: list[str]) -> list[Position]:
-        found = detect_assignments(positions, broker_positions, self.underlying, self._assignment_shares())
+        known = self._assignment_shares() + self._share_books()[0].get(self.underlying, 0)   # e.g. momentum's SPY
+        found = detect_assignments(positions, broker_positions, self.underlying, known)
         if not found:
             return positions
         batches = self.state._get("assignment_batches", [])

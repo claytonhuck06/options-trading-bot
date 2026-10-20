@@ -11,7 +11,7 @@ PROJECT="${0:A:h:h}"
 cd "$PROJECT" || exit 1
 OLD_PROJECT="/Users/claytonhuck/Options Trading bot"   # path baked into the .plist files in scripts/
 PAPER_URL="https://paper-api.alpaca.markets"
-JOBS=(collector trader midday afterclose overnight-buy overnight-sell)
+JOBS=(collector trader midday afterclose overnight-buy overnight-sell momentum)
 
 step() { print "\n== $1"; }
 fail() { print "\nSTOPPED: $1"; print "Nothing was turned on. Fix the above (or ask Claude), then run this script again."; exit 1; }

@@ -28,6 +28,7 @@ Commands:
         --grid strategy.KEY=V1,V2,...        Candidate settings the walk-forward chooses between.
     python main.py overnight [refresh|fetch|liquid]  Overnight-drift stock screener + walk-forward test (free daily bars).
     python main.py overnight-basket pick|buy|sell|status   Paper overnight share basket (buy at close, sell at open).
+    python main.py momentum plan|rebalance|status          Paper dual momentum (top 2 of 5 ETFs, monthly).
     python main.py after-close              Daily summary pushed to the phone, then storage cleanup (scheduled).
     python main.py storage status|cleanup|restore [--date D]   Live-data storage: sizes, cleanup now, restore a day.
     python main.py notify --title T --message M [--priority urgent]   Send a phone alert (used by the scripts).
@@ -237,8 +238,9 @@ def _paper_session(settings):
     store = MarketDataStore(PROJECT_ROOT / settings.storage.sqlite_path)
     creds = load_alpaca_credentials(settings)
     from execution.overnight_basket import OvernightBasket, open_db as open_basket_db
+    from execution.dual_momentum_paper import DualMomentumBook, open_db as open_momentum_db
     return TradingSession(settings, store, AlpacaPaperBroker(settings, creds), source=AlpacaMarketSource(settings, creds),
-                          basket=OvernightBasket(open_basket_db())), store
+                          basket=OvernightBasket(open_basket_db()), momentum=DualMomentumBook(open_momentum_db())), store
 
 
 def _retrying(call, wait: float = 15.0):
@@ -629,6 +631,7 @@ def cmd_after_close(settings) -> int:
     try:
         s = build_summary(store.conn, today, equity, [d for d in days if d <= today], is_trading_day)
         s.lines += _basket_lines()
+        s.lines += _momentum_lines()
     finally:
         store.close()
     print(s.title)
@@ -904,6 +907,125 @@ def _basket_lines() -> list[str]:
         b.conn.close()
 
 
+def _momentum_lines() -> list[str]:
+    """One line for the daily summary about dual momentum (it shares the account, so it moves the P&L)."""
+    from execution import dual_momentum_paper as dmp
+    if not dmp.DB_PATH.exists():
+        return []
+    b = dmp.DualMomentumBook(dmp.open_db())
+    try:
+        held = b.holdings()
+        last = b.conn.execute("SELECT * FROM months ORDER BY signal_month_end DESC LIMIT 1").fetchone()
+        out = ("Dual momentum: holding " + ", ".join(f"{q} {s}" for s, q in sorted(held.items()))) if held \
+            else "Dual momentum: all cash"
+        if last:
+            out += f" (from the {last['signal_month_end']} signal" + ("" if last["done"] else ", rebalance not finished") + ")"
+        return [out]
+    finally:
+        b.conn.close()
+
+
+def cmd_momentum(settings, action: str) -> int:
+    """Dual momentum on the PAPER account: plan | rebalance | status (execution/dual_momentum_paper.py)."""
+    import json
+    import time as _t
+    from datetime import datetime, time, timedelta
+
+    from core.config import PROJECT_ROOT
+    from core.secrets import load_alpaca_credentials
+    from execution import dual_momentum_paper as dmp
+    from monitoring import alerts
+
+    book = dmp.DualMomentumBook(dmp.open_db())
+    if action == "status":
+        basis = book.cost_basis()
+        print("Held now: " + (", ".join(f"{q} {s} @ ${c:,.2f}" for s, (q, c) in sorted(basis.items())) or "nothing (all cash)"))
+        print(f"Realized P&L so far: ${book.realized():+,.2f}")
+        for r in book.conn.execute("SELECT * FROM months ORDER BY signal_month_end DESC LIMIT 12"):
+            print(f"  {r['signal_month_end']}: hold {', '.join(json.loads(r['held'])) or 'cash'}; "
+                  f"targets {r['targets']}; {'done ' + r['done'] if r['done'] else 'NOT DONE'}")
+        return 0
+
+    from data.storage.db import MarketDataStore
+    from execution.alpaca_paper import AlpacaPaperBroker
+    from execution.broker import ReadOnlyBroker
+    from risk.state import RiskStateStore
+
+    creds = load_alpaca_credentials(settings)
+    clock = ReadOnlyBroker(settings, creds)
+    now = dmp.now_utc()
+    today = now.astimezone(dmp.ET).date()
+    first = today.replace(day=1)
+    last_month = _retrying(lambda: clock.trading_days((first - timedelta(days=1)).replace(day=1), first - timedelta(days=1)))
+    month_end = max(last_month)
+    if action == "rebalance":
+        row = book.month(month_end)
+        if row is not None and row["done"]:
+            print(f"{month_end:%B} signal already traded on {row['done']}; nothing to do")
+            return 0
+        if today not in _retrying(lambda: clock.trading_days(today, today)):
+            print("market closed today; will try next weekday")
+            return 0
+    try:
+        decision = dmp.decide(dmp.load_live(), month_end)
+    except Exception as exc:
+        print(f"no decision: {exc}")
+        if action == "rebalance":
+            alerts.urgent("Dual momentum: no decision", f"Couldn't compute the {month_end} signal: {exc}. Will retry next weekday.")
+        return 1 if action == "rebalance" else 0
+    prices = {}
+    for s in decision.held:
+        prices[s] = _retrying(lambda s=s: clock.latest_underlying_trade(s))["price"]
+
+    if action == "plan":
+        equity = AlpacaPaperBroker(settings, creds).equity()
+        print(f"Signal from {month_end}:")
+        for s in dmp.ASSETS:
+            print(f"  {s}: 12-month return {decision.scores[s]:+.1%}, trend {'on' if decision.trend_on[s] else 'off'}")
+        tgt = dmp.target_shares(decision, equity, prices)
+        print("Hold: " + (", ".join(f"{q} {s} (~${q * prices[s]:,.0f})" for s, q in tgt.items()) or "all cash"))
+        row = book.month(month_end)
+        print(f"This month's rebalance: {'done ' + row['done'] if row and row['done'] else 'not done yet'}")
+        return 0
+
+    if action == "rebalance":
+        broker = AlpacaPaperBroker(settings, creds)
+        c = _retrying(clock.market_clock)
+        store = MarketDataStore(PROJECT_ROOT / settings.storage.sqlite_path)
+        try:
+            level = int(RiskStateStore(store).level(today))
+        finally:
+            store.conn.close()
+        res = book.rebalance(broker, now, decision, prices, bool(c["is_open"]), level, dmp.STOP_FILE.exists())
+        print(res.summary(), flush=True)
+        if res.submitted:
+            target = datetime.combine(today, time(9, 33), dmp.ET)
+            while dmp.now_utc() < target:
+                _t.sleep(min(60.0, max(1.0, (target - dmp.now_utc()).total_seconds())))
+            notes = book.sync(broker)
+            if any(r["status"] in ("rejected", "canceled") for r in book.conn.execute(
+                    "SELECT status FROM orders WHERE day=?", (today.isoformat(),))) and not book.working():
+                retry = book.rebalance(broker, dmp.now_utc(), decision, prices, True, level, dmp.STOP_FILE.exists())
+                print(retry.summary(), flush=True)
+                _t.sleep(20)
+                notes += book.sync(broker)
+            res.notes += notes
+        done = book.finish(month_end, today)
+        held = book.holdings()
+        msg = (f"{month_end:%B} signal: hold {', '.join(decision.held) or 'cash'}. Now holding "
+               + (", ".join(f"{q} {s}" for s, q in sorted(held.items())) or "nothing") + "."
+               + (" " + "; ".join(res.notes) if res.notes else ""))
+        print(msg)
+        if done:
+            alerts.send("Dual momentum rebalanced", msg, "low")
+        elif res.submitted or book.working() or res.skipped:
+            alerts.urgent("Dual momentum needs a look", msg + " Not finished; will retry next weekday.")
+        return 0
+
+    print("momentum needs: plan | rebalance | status")
+    return 2
+
+
 def cmd_overnight_basket(settings, action: str) -> int:
     """Overnight share basket on the PAPER account: pick | buy | sell | status (execution/overnight_basket.py)."""
     import time as _t
@@ -1021,7 +1143,7 @@ def cmd_overnight_basket(settings, action: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="options-quant")
-    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study", "opra-widen", "backtest", "after-close", "storage", "notify", "running", "midday", "vol-data", "overnight", "overnight-basket"], nargs="?", default="config")
+    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study", "opra-widen", "backtest", "after-close", "storage", "notify", "running", "midday", "vol-data", "overnight", "overnight-basket", "momentum"], nargs="?", default="config")
     parser.add_argument("--env", help="development | backtest | observation | paper | live")
     parser.add_argument("--once", action="store_true", help="collect: run a single cycle")
     parser.add_argument("--cycles", type=int, help="collect: stop after N cycles")
@@ -1085,6 +1207,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_overnight(settings, args.action)
         if args.command == "overnight-basket":
             return cmd_overnight_basket(settings, args.action)
+        if args.command == "momentum":
+            return cmd_momentum(settings, args.action)
         if args.command == "running":
             return 0 if is_running(args.action) else 1
         if args.command == "trade":
