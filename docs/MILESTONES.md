@@ -225,6 +225,12 @@ The mispricing strategy above keeps running unchanged while the condor is resear
 - [x] Phase 4 (2026-10-20): **owner decision: no-go.** Condor not built for trading; no Databento spend. Mispricing
       strategy keeps running unchanged. Research code and data stay in the repo for reference
 
+## Current strategy: two-year backtest (2026-10-20)
+- [x] Relative-value spreads, live rules unchanged (before the deep-ITM fix), on 504 days of real Databento quotes
+      (2024-10-21 → 2026-10-16): 112 trades, win rate 26%, −$28/trade (t −4.75), total −$3,107 (−3.1%), under water
+      502 of 504 days. Note: the quote history covers strikes within ±3.5% of SPY only, so these are near-the-money
+      trades; the deep-ITM fix mainly affects the live free feed. Report: docs/research/backtest_2024-10-21_2026-10-16.md
+
 ## Phase 7 — Backtesting (requires suitable historical quote data)
 ## Phase 8 — Observation mode, then 60–90+ days of paper trading
 ## Phase 9 — Qwen analyst (Ollama installed; no model pulled yet)
