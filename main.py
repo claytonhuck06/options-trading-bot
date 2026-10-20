@@ -778,6 +778,14 @@ def cmd_vol_data(settings, action: str, folder: str | None) -> int:
             finally:
                 history.close()
             print(f"Model bar {'PASSED' if passed else 'FAILED'}. Report written: {path.relative_to(PROJECT_ROOT)}")
+        elif action == "condors":
+            from research.condor_build_report import write_report as write_condor_report
+            history = open_history(PROJECT_ROOT / settings.storage.history_path)
+            try:
+                path = write_condor_report(vol, history, PROJECT_ROOT / "docs" / "research", date.today())
+            finally:
+                history.close()
+            print(f"Report written: {path.relative_to(PROJECT_ROOT)}")
         elif action == "report":
             history = open_history(PROJECT_ROOT / settings.storage.history_path)
             try:
@@ -808,7 +816,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("action", nargs="?", default="status",
                         help="killswitch: status | stop | ack-warning | reset; storage: status | cleanup | restore; "
                              "running: collector | trader (exit 0 if that job is running); "
-                             "vol-data: status | fetch | load | report | forecast")
+                             "vol-data: status | fetch | load | report | forecast | condors")
     parser.add_argument("--path", help="vol-data load: folder of OptionsDX files (.txt/.csv/.zip)")
     parser.add_argument("--authorization", help="killswitch reset: the exact authorization phrase")
     parser.add_argument("--from", dest="date_from", help="opra-widen: first day YYYY-MM-DD")
