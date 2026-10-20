@@ -20,6 +20,8 @@ Commands:
     python main.py paper-demo   One-time end-to-end order test on the paper account (market hours).
     python main.py opra-history --weeks N   Download N most recent weeks of SPY option bid/ask (Databento, budget-capped).
     python main.py databento-spend          Show Databento spending against the budget.
+    python main.py opra-widen --from D --to D --band 0.06 --run-budget 20
+                                            Add further-out strikes to already-downloaded days (budget-capped).
     python main.py vol-study                Intraday volatility-pattern study on the downloaded quote history.
 
 Phase 1 cannot submit orders: there is no order-submission code in the project.
@@ -334,6 +336,28 @@ def cmd_vol_study(settings) -> int:
     return 0
 
 
+def cmd_opra_widen(settings, start: str, end: str, band: float, run_budget: float) -> int:
+    from datetime import date
+
+    from core.config import PROJECT_ROOT
+    from data.collectors.historical import open_history
+    from data.collectors.opra_history import OpraHistory, trading_days
+
+    g = _databento(settings)
+    history = open_history(PROJECT_ROOT / settings.storage.history_path)
+    days = trading_days(history, date.fromisoformat(start), date.fromisoformat(end))
+    s0 = g.summary()
+    print(f"Widening {len(days)} days to ±{band:.1%}; this run may spend at most ${run_budget:.2f} "
+          f"(spent so far ${s0.spent_usd:.2f} of ${s0.budget_usd:.2f}).", flush=True)
+    rep = OpraHistory(settings.databento, g, history).widen(days, band, run_budget)
+    s1 = g.summary()
+    print(f"Widened {rep.days_done} days. This run spent ${s1.spent_usd - s0.spent_usd:.2f}; "
+          f"total ${s1.spent_usd:.2f} of ${s1.budget_usd:.2f}.")
+    if rep.stopped_reason:
+        print(f"STOPPED: {rep.stopped_reason}")
+    return 0
+
+
 def cmd_killswitch(settings, action: str, authorization: str | None) -> int:
     from datetime import datetime
 
@@ -498,12 +522,16 @@ def cmd_report(settings, log, day_text: str | None, every: int) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="options-quant")
-    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study"], nargs="?", default="config")
+    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study", "opra-widen"], nargs="?", default="config")
     parser.add_argument("--env", help="development | backtest | observation | paper | live")
     parser.add_argument("--once", action="store_true", help="collect: run a single cycle")
     parser.add_argument("--cycles", type=int, help="collect: stop after N cycles")
     parser.add_argument("action", nargs="?", default="status", help="killswitch: status | stop | ack-warning | reset")
     parser.add_argument("--authorization", help="killswitch reset: the exact authorization phrase")
+    parser.add_argument("--from", dest="date_from", help="opra-widen: first day YYYY-MM-DD")
+    parser.add_argument("--to", dest="date_to", help="opra-widen: last day YYYY-MM-DD")
+    parser.add_argument("--band", type=float, default=0.06, help="opra-widen: strike band, e.g. 0.06 = ±6%%")
+    parser.add_argument("--run-budget", type=float, default=20.0, help="opra-widen: max $ this run may spend")
     parser.add_argument("--weeks", type=int, default=1, help="opra-history: how many recent weeks")
     parser.add_argument("--any-time", action="store_true", help="scan: ignore the entry-time window")
     parser.add_argument("--date", help="report: trading day YYYY-MM-DD")
@@ -523,6 +551,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "config":
             return cmd_config(settings)
+        if args.command == "opra-widen":
+            return cmd_opra_widen(settings, args.date_from, args.date_to, args.band, args.run_budget)
         if args.command == "vol-study":
             return cmd_vol_study(settings)
         if args.command == "databento-spend":

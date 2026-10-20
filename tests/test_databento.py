@@ -133,3 +133,73 @@ def test_bad_key_is_never_echoed(monkeypatch):
     with pytest.raises(ConfigError) as exc:
         g.quote(**REQ)
     assert "SECRET123" not in str(exc.value)
+
+
+# --- widening already-downloaded days ------------------------------------------------
+
+class _Frame:
+    def __init__(self, df):
+        self.df = df
+
+    def to_df(self):
+        return self.df.set_index("ts_recv")
+
+
+class FakeGuard:
+    """Returns one call (770) and one far put (720) for every request; charges $1 per cbbo request."""
+
+    def __init__(self):
+        self.spent = 0.0
+        self.cbbo_symbols = []
+        self.ledger = sqlite3.connect(":memory:")
+
+    def summary(self):
+        from data.collectors.databento_guard import SpendSummary
+        return SpendSummary(self.spent, 100.0, 0)
+
+    def get_range(self, *, schema, symbols, start, **kw):
+        import pandas as pd
+        ts = pd.Timestamp(f"{start} 14:00", tz="UTC")
+        if schema == "definition":
+            return _Frame(pd.DataFrame({
+                "ts_recv": [ts, ts], "raw_symbol": ["SPY   261030C00770000", "SPY   261030P00720000"],
+                "expiration": pd.to_datetime(["2026-10-30 20:00", "2026-10-30 20:00"], utc=True),
+                "strike_price": [770.0, 720.0], "instrument_class": ["C", "P"]}))
+        self.spent += 1.0
+        self.cbbo_symbols.append(list(symbols))
+        return _Frame(pd.DataFrame({"ts_recv": [ts] * len(symbols), "symbol": symbols, "bid_px_00": 1.0, "ask_px_00": 1.1,
+                                    "bid_sz_00": 10, "ask_sz_00": 10}))
+
+
+def _history_with_close(price):
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE minute_bars (symbol, ts, open, high, low, close, volume, vwap)")
+    for d in ("2026-10-08", "2026-10-09", "2026-10-12", "2026-10-13", "2026-10-14"):
+        conn.execute("INSERT INTO minute_bars VALUES ('SPY', ?, 0,0,0,?,0,0)", (f"{d}T19:59:00+00:00", price))
+    return conn
+
+
+def test_widen_fetches_only_missing_strikes_and_merges(tmp_path):
+    import pandas as pd
+    from data.collectors.opra_history import OpraHistory
+    g = FakeGuard()
+    opra = OpraHistory(CFG, g, _history_with_close(770.0), out_dir=tmp_path)
+    days = [date(2026, 10, 13)]
+    opra._download_week(days)                                 # ±3.5%: only the 770 call
+    assert pd.read_parquet(tmp_path / "2026-10-13.parquet")["symbol"].tolist() == ["SPY261030C00770000"]
+    opra.widen(days, band_pct=0.08, run_budget_usd=20)        # ±8%: adds the 720 put
+    merged = pd.read_parquet(tmp_path / "2026-10-13.parquet")
+    assert sorted(merged["symbol"]) == ["SPY261030C00770000", "SPY261030P00720000"]
+    assert g.cbbo_symbols[-1] == ["SPY   261030P00720000"]   # the call was not paid for twice
+
+
+def test_widen_stops_at_its_own_ceiling(tmp_path):
+    from data.collectors.opra_history import OpraHistory
+    g = FakeGuard()
+    opra = OpraHistory(CFG, g, _history_with_close(770.0), out_dir=tmp_path)
+    days = [date(2026, 10, 9), date(2026, 10, 13), date(2026, 10, 14)]      # two calendar weeks
+    for week in ([days[0]], days[1:]):
+        opra._download_week(week)
+    spent_before = g.spent
+    rep = opra.widen(days, band_pct=0.08, run_budget_usd=1.5)   # first week costs $1; a second would exceed $1.50
+    assert g.spent - spent_before == 1.0 and rep.stopped_reason and "ceiling" in rep.stopped_reason

@@ -100,16 +100,47 @@ class OpraHistory:
                 break
         return rep
 
-    def _download_week(self, week: list[date]) -> None:
+    def widen(self, days: list[date], band_pct: float, run_budget_usd: float) -> DownloadReport:
+        """Add strikes out to ±band_pct on days already downloaded, fetching only contracts not on disk.
+        Stops before a week that would take this run past run_budget_usd (the global caps still apply too)."""
+        rep = DownloadReport()
+        cfg = self.cfg.model_copy(update={"strike_band_pct": band_pct})
+        start_spent = self.guard.summary().spent_usd
+        last_week_cost = 0.0
+        have = sorted(set(days) & self.done_days())
+        for week in reversed(list(_weeks(have))):
+            used = self.guard.summary().spent_usd - start_spent
+            if used + last_week_cost > run_budget_usd:
+                rep.stopped_reason = (f"this run's ${run_budget_usd:.2f} ceiling: ${used:.2f} used, next week would "
+                                      f"cost about ${last_week_cost:.2f}")
+                break
+            before = self.guard.summary().spent_usd
+            try:
+                self._download_week(week, cfg=cfg, merge=True)
+            except BudgetExceeded as exc:
+                rep.stopped_reason = str(exc)
+                break
+            last_week_cost = self.guard.summary().spent_usd - before
+            rep.days_done += len(week)
+        return rep
+
+    def _download_week(self, week: list[date], cfg: DatabentoSettings | None = None, merge: bool = False) -> None:
+        cfg = cfg or self.cfg
         start, end = week[0].isoformat(), (week[-1] + timedelta(days=1)).isoformat()
         defs = self.guard.get_range(dataset=DATASET, schema="definition", symbols=["SPY.OPT"], stype_in="parent",
                                     start=start, end=end).to_df().reset_index()
         defs["day"] = pd.to_datetime(defs["ts_recv"]).dt.tz_convert(EASTERN).dt.date
         per_day: dict[date, list[str]] = {}
+        existing: dict[date, pd.DataFrame] = {}
         for d in week:
             ref = previous_close(self.history, d)
             day_defs = defs[defs["day"] <= d].drop_duplicates("raw_symbol", keep="last")
-            per_day[d] = select_contracts(day_defs, d, ref, self.cfg) if ref else []
+            per_day[d] = select_contracts(day_defs, d, ref, cfg) if ref else []
+            path = self.out_dir / f"{d.isoformat()}.parquet"
+            if merge and path.is_file():
+                existing[d] = pd.read_parquet(path)
+                on_disk = set(existing[d]["symbol"].unique())
+                per_day[d] = [s for s in per_day[d] if s.replace(" ", "") not in on_disk]   # only what we lack
         symbols = sorted({s for v in per_day.values() for s in v})
         if not symbols:
             return
@@ -123,9 +154,13 @@ class OpraHistory:
                 "bid": sel["bid_px_00"], "ask": sel["ask_px_00"], "bid_size": sel["bid_sz_00"], "ask_size": sel["ask_sz_00"],
             })
             path = self.out_dir / f"{d.isoformat()}.parquet"
+            if d in existing:
+                out = (pd.concat([existing[d], out], ignore_index=True)
+                       .drop_duplicates(["ts", "symbol"], keep="first").sort_values(["ts", "symbol"]))
             out.to_parquet(path, index=False, compression="zstd")
             self.index.execute("INSERT OR REPLACE INTO opra_days VALUES (?,?,?,?,?)",
-                               (d.isoformat(), len(per_day[d]), len(out), str(path.relative_to(PROJECT_ROOT)),
+                               (d.isoformat(), out["symbol"].nunique(), len(out),
+                                str(path.relative_to(PROJECT_ROOT)) if path.is_relative_to(PROJECT_ROOT) else str(path),
                                 datetime.now(timezone.utc).isoformat()))
             self.index.commit()
         log.info("week %s..%s: %d contracts, %d quotes", start, week[-1], len(symbols), len(q))
