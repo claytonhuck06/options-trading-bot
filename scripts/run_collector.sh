@@ -15,8 +15,9 @@ if [[ -z "${ALPACA_API_KEY_ID:-}" && -f "$HOME/.zshrc" ]]; then
   eval "$(grep -E '^export (ALPACA|APCA)_[A-Z_]+=' "$HOME/.zshrc")"
 fi
 
-# Only one collector at a time.
-if /usr/bin/pgrep -f "main.py collect" >/dev/null; then
+# Only one collector at a time. The collector holds a lock file while it runs (released automatically if it
+# stops or crashes); `main.py running` checks that lock, so nothing else can be mistaken for a running copy.
+if "$PROJECT/.venv/bin/python" -W ignore main.py running collector >/dev/null 2>&1; then
   echo "=== $(date) collector already running — not starting another ===" >> "$LOG"
   exit 0
 fi

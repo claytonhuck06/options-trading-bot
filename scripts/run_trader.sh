@@ -19,16 +19,18 @@ export OPTIONS_QUANT_ENV=paper
 PY="$PROJECT/.venv/bin/python"
 alert() { "$PY" -W ignore main.py notify --priority urgent --title "$1" --message "$2" >> "$LOG" 2>&1; }
 
-if /usr/bin/pgrep -f "main.py (trade|paper-demo)" >/dev/null; then
+# Running copies are detected by the lock each job holds (`main.py running`), not by searching process names.
+running() { "$PY" -W ignore main.py running "$1" >/dev/null 2>&1; }
+if running trader; then
   echo "=== $(date) trader already running — not starting another ===" >> "$LOG"
   exit 0
 fi
 # The collector starts at 8:15 and waits for the open; give it a few minutes if it is late.
 for _ in 1 2 3 4 5 6; do
-  /usr/bin/pgrep -f "main.py collect" >/dev/null && break
+  running collector && break
   sleep 30
 done
-if ! /usr/bin/pgrep -f "main.py collect" >/dev/null; then
+if ! running collector; then
   echo "=== $(date) collector not running — no market data, not trading ===" >> "$LOG"
   alert "Bot not trading today" "The market-data collector is not running, so the trader did not start."
   exit 0

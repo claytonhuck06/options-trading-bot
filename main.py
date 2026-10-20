@@ -39,6 +39,7 @@ import argparse
 import sys
 
 from core.config import ConfigError, load_settings
+from core.instance_lock import AlreadyRunning, is_running, single_instance
 from core.logging_setup import get_logger, setup_logging
 from core.secrets import load_alpaca_credentials
 from risk.limits import compute_daily_budget
@@ -716,12 +717,13 @@ def cmd_backtest(settings, start: str | None, end: str | None, walk: str | None,
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="options-quant")
-    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study", "opra-widen", "backtest", "after-close", "storage", "notify"], nargs="?", default="config")
+    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study", "opra-widen", "backtest", "after-close", "storage", "notify", "running"], nargs="?", default="config")
     parser.add_argument("--env", help="development | backtest | observation | paper | live")
     parser.add_argument("--once", action="store_true", help="collect: run a single cycle")
     parser.add_argument("--cycles", type=int, help="collect: stop after N cycles")
     parser.add_argument("action", nargs="?", default="status",
-                        help="killswitch: status | stop | ack-warning | reset; storage: status | cleanup | restore")
+                        help="killswitch: status | stop | ack-warning | reset; storage: status | cleanup | restore; "
+                             "running: collector | trader (exit 0 if that job is running)")
     parser.add_argument("--authorization", help="killswitch reset: the exact authorization phrase")
     parser.add_argument("--from", dest="date_from", help="opra-widen: first day YYYY-MM-DD")
     parser.add_argument("--to", dest="date_to", help="opra-widen: last day YYYY-MM-DD")
@@ -768,10 +770,14 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_databento_spend(settings)
         if args.command == "opra-history":
             return cmd_opra_history(settings, args.weeks)
+        if args.command == "running":
+            return 0 if is_running(args.action) else 1
         if args.command == "trade":
-            return cmd_trade(settings, get_logger("main"))
+            with single_instance("trader"):
+                return cmd_trade(settings, get_logger("main"))
         if args.command == "paper-demo":
-            return cmd_paper_demo(settings, get_logger("main"))
+            with single_instance("trader"):
+                return cmd_paper_demo(settings, get_logger("main"))
         if args.command == "killswitch":
             return cmd_killswitch(settings, args.action, args.authorization)
         if args.command == "risk-replay":
@@ -787,8 +793,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "price":
             return cmd_price(settings, get_logger("main"), args.as_of)
         if args.command == "collect":
-            return cmd_collect(settings, get_logger("main"), args.once, args.cycles, args.wait_for_open)
+            with single_instance("collector"):
+                return cmd_collect(settings, get_logger("main"), args.once, args.cycles, args.wait_for_open)
         return cmd_check(settings, get_logger("main"))
+    except AlreadyRunning as exc:                 # another copy owns the job: not an error, nothing to alert
+        log.warning("%s; not starting another", exc)
+        print(f"{exc}; not starting another")
+        return 0
     except ConfigError as exc:
         log.error("configuration error: %s", exc)
         print(f"CONFIG ERROR: {exc}", file=sys.stderr)

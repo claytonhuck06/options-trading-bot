@@ -17,13 +17,13 @@ from __future__ import annotations
 
 import shutil
 import sqlite3
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
 
 from core.config import PROJECT_ROOT, Settings
+from core.instance_lock import is_running
 from core.logging_setup import get_logger
 
 log = get_logger("retention")
@@ -117,7 +117,7 @@ def restore_day(conn: sqlite3.Connection, day: str, archive_dir: Path) -> int:
 def _busy() -> bool:
     """True while the collector or trader is running (VACUUM needs the database to itself)."""
     try:
-        return subprocess.run(["/usr/bin/pgrep", "-f", "main.py (collect|trade|paper-demo)"], capture_output=True).returncode == 0
+        return is_running("collector") or is_running("trader")
     except OSError:
         return True
 

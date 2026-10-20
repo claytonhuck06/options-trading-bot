@@ -42,10 +42,15 @@ class ReadOnlyBroker:
     def __init__(self, settings: Settings, creds: AlpacaCredentials):
         if settings.broker.account_type == "paper" and not creds.is_paper:
             raise ConfigError("refusing to connect: paper settings with live credentials")
-        self.__trading = TradingClient(creds.key_id, creds.secret_key, paper=creds.is_paper)
-        self.__data = StockHistoricalDataClient(creds.key_id, creds.secret_key)
+        self.__creds = creds
+        self.reconnect()
         self._stock_feed = DataFeed.SIP if settings.market_data.stock_feed == "sip" else DataFeed.IEX
         self.is_paper = creds.is_paper
+
+    def reconnect(self) -> None:
+        """Fresh API clients, so no connection opened on a network that has since gone away is reused."""
+        self.__trading = TradingClient(self.__creds.key_id, self.__creds.secret_key, paper=self.__creds.is_paper)
+        self.__data = StockHistoricalDataClient(self.__creds.key_id, self.__creds.secret_key)
 
     def account_summary(self) -> AccountSummary:
         a = self.__trading.get_account()

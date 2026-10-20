@@ -35,12 +35,22 @@ def _num(v) -> float | None:
 class AlpacaMarketSource:
     def __init__(self, settings: Settings, creds: AlpacaCredentials, broker: ReadOnlyBroker | None = None):
         self.broker = broker or ReadOnlyBroker(settings, creds)
-        self._options = OptionHistoricalDataClient(creds.key_id, creds.secret_key)
-        self._stocks = StockHistoricalDataClient(creds.key_id, creds.secret_key)
+        self._creds = creds
+        self._new_clients()
         self.option_feed = settings.market_data.option_feed
         self.stock_feed = settings.market_data.stock_feed
         self._ofeed = OptionsFeed.OPRA if self.option_feed == "opra" else OptionsFeed.INDICATIVE
         self._sfeed = DataFeed.SIP if self.stock_feed == "sip" else DataFeed.IEX
+
+    def _new_clients(self) -> None:
+        self._options = OptionHistoricalDataClient(self._creds.key_id, self._creds.secret_key)
+        self._stocks = StockHistoricalDataClient(self._creds.key_id, self._creds.secret_key)
+
+    def reconnect(self) -> None:
+        """Drop every open connection and start fresh. After the Mac changes network (wifi lost and back), pooled
+        connections still point at the old address and fail forever ("Can't assign requested address")."""
+        self._new_clients()
+        self.broker.reconnect()
 
     def fetch_contracts(self, underlying: str, gte: date, lte: date) -> list[OptionContract]:
         out = []

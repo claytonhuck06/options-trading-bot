@@ -75,6 +75,37 @@ def test_recovers_from_disconnects_with_backoff():
     assert count(c, "system_events", "event='collector_recovered'") == 1
 
 
+class StaleAfterNetworkChange(FakeSource):
+    """Like a pooled connection left over from before the wifi changed: fails until the source reconnects."""
+    def __init__(self):
+        super().__init__()
+        self.reconnects = 0
+
+    def reconnect(self):
+        self.reconnects += 1
+
+    def fetch_underlying(self, symbol):
+        if not self.reconnects:
+            raise OSError(49, "Can't assign requested address")
+        return super().fetch_underlying(symbol)
+
+
+def test_reconnects_after_a_failure_so_stale_connections_do_not_fail_forever():
+    src = StaleAfterNetworkChange()
+    c, sleeps = make(src)
+    assert c.run(lambda: True, max_cycles=1) == 1
+    assert src.reconnects == 1 and sleeps[0] == 15
+    assert count(c, "system_events", "event='collector_recovered'") == 1
+
+
+def test_a_failing_reconnect_does_not_crash_the_loop():
+    class BrokenReconnect(FakeSource):
+        def reconnect(self):
+            raise RuntimeError("cannot build client")
+    c, _ = make(BrokenReconnect(fail_times=1))
+    assert c.run(lambda: True, max_cycles=1) == 1
+
+
 def test_halts_after_too_many_consecutive_failures():
     c, sleeps = make(FakeSource(fail_times=10_000))
     with pytest.raises(RuntimeError, match="halted"):

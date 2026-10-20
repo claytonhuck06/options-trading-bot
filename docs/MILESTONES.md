@@ -158,6 +158,10 @@ Requirement: orders placed, modified, cancelled, filled and reconciled correctly
       collector", not "halt"; an alert says how long it was away. Network errors are retried instead of crashing the
       trader; after 3 minutes without a connection the owner is alerted, and on reconnect orders and positions are
       re-checked with the broker before trading resumes. Data still stale after the grace period halts as before
+- [x] Network change (wifi lost and back, 2026-10-20): the collector rebuilds its Alpaca connections after any failed
+      cycle instead of reusing ones tied to the old network. One copy per job is enforced by a lock file the OS
+      releases on exit or crash (`main.py running collector|trader`), replacing a process-name search that
+      mistook unrelated commands for a running collector and blocked restarts
 - [x] Morning check before the open (trader now starts 8:20 CT): unknown orders settled, overnight assignments
       recognised, broker vs our records, positions carried into the day, missed trading days
 - [x] Walk-forward testing (`backtesting/walk_forward.py`) and the standard report (`backtesting/metrics.py`):

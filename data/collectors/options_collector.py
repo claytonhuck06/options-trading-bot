@@ -162,8 +162,20 @@ class OptionsCollector:
                     log.critical("collector halted after %d consecutive failures", failures)
                     raise RuntimeError(f"collector halted after {failures} consecutive failures") from exc
                 self.sleep(backoff)
+                self._reconnect()
         self.store.log_event("INFO", "collector_stopped", {"reason": "max_cycles", "cycles": done})
         return done
+
+
+    def _reconnect(self) -> None:
+        """Retry on fresh connections: a stale one from before a network change would fail every time."""
+        reconnect = getattr(self.source, "reconnect", None)
+        if reconnect is None:
+            return
+        try:
+            reconnect()
+        except Exception as exc:                  # building clients is local; if even that fails, the next cycle reports it
+            log.warning("reconnect failed: %s", exc)
 
 
 def wait_for_open(market_clock: Callable[[], dict], sleep: Callable[[float], None] = time.sleep,

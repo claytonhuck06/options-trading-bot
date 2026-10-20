@@ -24,3 +24,6 @@ data/storage/.paper_demo_passed
 STOP
 data/storage/studies/
 data/storage/live_archive/
+
+# Single-instance lock files (live only while a job runs)
+data/storage/locks/
