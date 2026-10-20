@@ -541,8 +541,8 @@ def run(history: sqlite3.Connection | None, out_dir: Path, today: date, cache_di
           f"- {len(main.trades)} trades ({len(closed)} completed holding periods"
           f"{', 1 still open' if trips and trips[-1][1] is None else ''}). "
           f"Winners {sum(r > 0 for r in closed)}, losers {sum(r <= 0 for r in closed)}.",
-          f"- Whipsaws (held {WHIPSAW_DAYS} days or less and lost): {len(ws)}, costing a combined "
-          f"{sum(r for _, _, r in ws):+.1%} of the holding value.",
+          f"- Whipsaws (held {WHIPSAW_DAYS} days or less and lost): {len(ws)}; their returns add up to "
+          f"{sum(r for _, _, r in ws):+.1%}.",
           f"- Full trade log: [{trades_csv.name}]({trades_csv.name}). Monthly log (close, average, signal, intended "
           f"trade, fill): [{months_csv.name}]({months_csv.name}).", "",
           "| Bought | Sold | Return incl. costs |", "|---|---|---|"]
@@ -559,7 +559,8 @@ def run(history: sqlite3.Connection | None, out_dir: Path, today: date, cache_di
                   + (f": {', '.join(f'{d} ({g:.2%})' for d, g in hist_check['big'][:5])}" if hist_check["big"] else "")
                   + ".")
     L += [f"- Dividends {START.year}–{last.year}: {div_check['count']}. Years without exactly 4: "
-          f"{div_check['wrong_years'] or 'none'}. Off SPY's schedule: {div_check['off_schedule'] or 'none'}.",
+          f"{', '.join(f'{y} ({n})' for y, n in div_check['wrong_years'].items()) or 'none'}. Off SPY's schedule: "
+          f"{', '.join(d.isoformat() for d in div_check['off_schedule']) or 'none'}.",
           "- Cash earns FRED DTB3 (3-month T-bill), using the rate published before each day.",
           "- Taxes are ignored. They'd hurt the rule more than buy-and-hold, because the rule sells and realizes gains."]
     path = out_dir / f"monthly_trend_backtest_{today.isoformat()}.md"

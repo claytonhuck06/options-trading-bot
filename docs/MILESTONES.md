@@ -225,6 +225,14 @@ The mispricing strategy above keeps running unchanged while the condor is resear
 - [x] Phase 4 (2026-10-20): **owner decision: no-go.** Condor not built for trading; no Databento spend. Mispricing
       strategy keeps running unchanged. Research code and data stay in the repo for reference
 
+## SPY monthly trend, 10-month average (2026-10-20)
+- [x] Pre-registered rules and 7 pass/fail bars before any result: docs/research/monthly_trend_preregistration.md
+- [x] Backtest 1994-01 to 2026-09 on free Yahoo SPY prices (dividends reinvested, cash earns T-bills, 0.05%/side)
+      → **NO-GO, 6 of 7 bars passed.** Full period: drawdown 24% vs 55%, Sharpe 0.68 vs 0.61, 9.5% vs 10.9% a year.
+      Failed the later check (2013–2026): 9.4% vs 14.9% a year, Sharpe 0.71 vs 0.93. The edge came almost entirely
+      from sitting out 2000–02 and 2008–09. Report: docs/research/monthly_trend_backtest_2026-10-20.md
+- [ ] Owner decision: paper-trade anyway, try the same rule on several asset classes (Faber), or drop it
+
 ## Current strategy: two-year backtest (2026-10-20)
 - [x] Relative-value spreads, live rules unchanged (before the deep-ITM fix), on 504 days of real Databento quotes
       (2024-10-21 → 2026-10-16): 112 trades, win rate 26%, −$28/trade (t −4.75), total −$3,107 (−3.1%), under water
