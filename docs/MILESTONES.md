@@ -189,7 +189,12 @@ The mispricing strategy above keeps running unchanged while the condor is resear
       7 pass/fail bars pre-registered in `docs/research/iron_condor_preregistration.md` before any condor data was seen
 - [x] Amendment 1 (2026-10-20, before any data seen): volatility forecast (HAR-RV + IV) chooses condor vs. long straddle;
       forecast must beat VIX out-of-sample first. Straddle size pending owner decision 6
-- [ ] Phase 1: free daily SPY option chains (10+ years), VIX, FOMC and CPI calendars, data quality report
+- [x] Phase 1 (part, 2026-10-20): `main.py vol-data fetch|load|report|status`, own database `vol_history.db`.
+      VIX (1990–), VIX9D (2011–), VIX3M (2009–) from CBOE: no missing SPY trading days since 2016; the only big
+      one-day jumps (VIX9D 2018-02-05, 2024-12-18) are real market events. FOMC 2015–2027 from federalreserve.gov
+      (8 scheduled/yr; 2020 also 2 unscheduled + cancelled March meeting). CPI release dates 2015–2026 from BLS,
+      all 140 confirmed in FRED/ALFRED (Oct 2025 CPI never published). Report: docs/research/vol_data_report_2026-10-20.md
+- [ ] Phase 1 (rest): SPY end-of-day option chains — free OptionsDX files 2010–2023 need the owner's free checkout
 - [ ] Phase 1b: volatility forecast and forecast report
 - [ ] Phase 2: condor and straddle builder · Phase 3: backtest · Phase 4: owner go/no-go
 

@@ -748,15 +748,60 @@ def cmd_backtest(settings, start: str | None, end: str | None, walk: str | None,
     return 0
 
 
+def cmd_vol_data(settings, action: str, folder: str | None) -> int:
+    """Volatility strategy, Phase 1: free data (CBOE indices, FOMC/CPI dates, OptionsDX chains) and its report."""
+    from datetime import date
+
+    from core.config import PROJECT_ROOT
+    from data.collectors.historical import open_history
+    from data.collectors.vol_data import fetch_all, load_optionsdx_folder, open_vol_db
+    from research.vol_data_report import write_report
+
+    vol = open_vol_db(PROJECT_ROOT / "data" / "storage" / "vol_history.db")
+    try:
+        if action == "fetch":
+            for name, n in fetch_all(vol).items():
+                print(f"{name:<6} {n:,} rows")
+        elif action == "load":
+            if not folder:
+                print("vol-data load needs --path <folder with the OptionsDX files>")
+                return 2
+            loaded = load_optionsdx_folder(vol, folder)
+            for name, read, kept in loaded:
+                print(f"{name}: kept {kept:,} of {read:,} rows")
+            print(f"{len(loaded)} new file(s) loaded")
+        elif action == "report":
+            history = open_history(PROJECT_ROOT / settings.storage.history_path)
+            try:
+                path = write_report(vol, history, PROJECT_ROOT / "docs" / "research", date.today())
+            finally:
+                history.close()
+            print(f"Report written: {path.relative_to(PROJECT_ROOT)}")
+        else:
+            for sym, first, last, n in vol.execute(
+                    "SELECT symbol, MIN(day), MAX(day), COUNT(*) FROM index_daily GROUP BY symbol"):
+                print(f"{sym:<6} {first} to {last} ({n:,} days)")
+            for ev, n in vol.execute("SELECT event, COUNT(*) FROM events GROUP BY event"):
+                print(f"{ev:<6} {n} dates")
+            days, first, last = vol.execute(
+                "SELECT COUNT(DISTINCT quote_date), MIN(quote_date), MAX(quote_date) FROM eod_chain").fetchone()
+            print(f"Chains {days:,} quote days" + (f" ({first} to {last})" if days else " (not loaded yet)"))
+    finally:
+        vol.close()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="options-quant")
-    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study", "opra-widen", "backtest", "after-close", "storage", "notify", "running", "midday"], nargs="?", default="config")
+    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study", "opra-widen", "backtest", "after-close", "storage", "notify", "running", "midday", "vol-data"], nargs="?", default="config")
     parser.add_argument("--env", help="development | backtest | observation | paper | live")
     parser.add_argument("--once", action="store_true", help="collect: run a single cycle")
     parser.add_argument("--cycles", type=int, help="collect: stop after N cycles")
     parser.add_argument("action", nargs="?", default="status",
                         help="killswitch: status | stop | ack-warning | reset; storage: status | cleanup | restore; "
-                             "running: collector | trader (exit 0 if that job is running)")
+                             "running: collector | trader (exit 0 if that job is running); "
+                             "vol-data: status | fetch | load | report")
+    parser.add_argument("--path", help="vol-data load: folder of OptionsDX files (.txt/.csv/.zip)")
     parser.add_argument("--authorization", help="killswitch reset: the exact authorization phrase")
     parser.add_argument("--from", dest="date_from", help="opra-widen: first day YYYY-MM-DD")
     parser.add_argument("--to", dest="date_to", help="opra-widen: last day YYYY-MM-DD")
@@ -805,6 +850,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_opra_history(settings, args.weeks)
         if args.command == "midday":
             return cmd_midday(settings)
+        if args.command == "vol-data":
+            return cmd_vol_data(settings, args.action, args.path)
         if args.command == "running":
             return 0 if is_running(args.action) else 1
         if args.command == "trade":
