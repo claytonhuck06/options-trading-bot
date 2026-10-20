@@ -215,7 +215,8 @@ The mispricing strategy above keeps running unchanged while the condor is resear
       * Older files (2016–2020) have 4–16% locked quotes (bid = ask), likely a rounding quirk; spreads otherwise
         realistic (2–3¢ on OTM puts). Locked legs are rejected, which costs trades but can't flatter results
       * Amendment 3 written before any P&L: how thin settings count in smoothing and bar 6
-      * Straddle builder not built (forecast failed its bar in Phase 1b) · Phase 3: backtest · Phase 4: owner go/no-go
+      * Straddle builder not built (forecast failed its bar in Phase 1b)
+- [ ] Phase 3: backtest · Phase 4: owner go/no-go
 
 ## Phase 7 — Backtesting (requires suitable historical quote data)
 ## Phase 8 — Observation mode, then 60–90+ days of paper trading
