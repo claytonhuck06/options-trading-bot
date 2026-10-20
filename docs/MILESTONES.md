@@ -222,7 +222,8 @@ The mispricing strategy above keeps running unchanged while the condor is resear
       split. Every setting with 60+ discovery trades lost money. Drawdown (9.2%) and crash bars passed only because
       size was small. Review: vendor strike gaps hit 66 trades but clean trades alone still lose (−$28.62, t = −2.73).
       Report: docs/research/condor_backtest_2026-10-20.md
-- [ ] Phase 4: owner go/no-go (recommendation: no-go; nothing built for trading, no Databento spend)
+- [x] Phase 4 (2026-10-20): **owner decision: no-go.** Condor not built for trading; no Databento spend. Mispricing
+      strategy keeps running unchanged. Research code and data stay in the repo for reference
 
 ## Phase 7 — Backtesting (requires suitable historical quote data)
 ## Phase 8 — Observation mode, then 60–90+ days of paper trading
