@@ -143,3 +143,13 @@ and why. The screener itself is still produced either way, labelled as research.
 - Capacity: auction prices assume orders small relative to the auction; at $100k, 20 names is $5k each.
 - Execution timing: market-on-close orders must be in by 3:50 pm ET (NYSE) / 3:55 pm (Nasdaq); the test assumes
   the official close and open were obtained.
+
+---
+
+## Amendments
+
+**2026-10-20, before any data was fetched (no results seen).** Download step: to keep the download to a few
+minutes, full 2016+ history is fetched only for symbols whose average dollar volume over the last 90 days is at
+least **$5 million** (a quarter of the $20 million eligibility floor). Everything else in the rules is unchanged.
+This adds to the survivorship bias in A: a stock that was liquid in, say, 2018 but trades under $5 million a
+day now is missing from the earlier years.

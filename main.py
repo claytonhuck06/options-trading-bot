@@ -26,6 +26,7 @@ Commands:
     python main.py backtest --from D --to D Backtest on downloaded real quotes; standard report in docs/research/.
         --walk-forward TRAIN,TEST           Walk-forward test (window sizes in trading days).
         --grid strategy.KEY=V1,V2,...        Candidate settings the walk-forward chooses between.
+    python main.py overnight [refresh|fetch]  Overnight-drift stock screener + walk-forward test (free daily bars).
     python main.py after-close              Daily summary pushed to the phone, then storage cleanup (scheduled).
     python main.py storage status|cleanup|restore [--date D]   Live-data storage: sizes, cleanup now, restore a day.
     python main.py notify --title T --message M [--priority urgent]   Send a phone alert (used by the scripts).
@@ -844,16 +845,37 @@ def cmd_vol_data(settings, action: str, folder: str | None) -> int:
     return 0
 
 
+def cmd_overnight(settings, action: str) -> int:
+    """Overnight drift screener: 'fetch' downloads daily bars (free), anything else (re)builds the report."""
+    from datetime import date
+
+    from core.config import PROJECT_ROOT
+    from core.secrets import load_alpaca_credentials
+    from research.overnight_screener import download, last_completed_day, open_db, run
+
+    conn = open_db(PROJECT_ROOT / "data" / "storage" / "studies" / "overnight_bars.db")
+    try:
+        have = conn.execute("SELECT value FROM meta WHERE key='end'").fetchone()
+        if action == "fetch" or have is None or (action == "refresh" and have[0] < last_completed_day().isoformat()):
+            download(load_alpaca_credentials(settings), conn, last_completed_day())
+        path, go = run(conn, PROJECT_ROOT / "docs" / "research", date.today())
+    finally:
+        conn.close()
+    print(f"{'GO' if go else 'NO-GO'}. Report written: {path.relative_to(PROJECT_ROOT)}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="options-quant")
-    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study", "opra-widen", "backtest", "after-close", "storage", "notify", "running", "midday", "vol-data"], nargs="?", default="config")
+    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study", "opra-widen", "backtest", "after-close", "storage", "notify", "running", "midday", "vol-data", "overnight"], nargs="?", default="config")
     parser.add_argument("--env", help="development | backtest | observation | paper | live")
     parser.add_argument("--once", action="store_true", help="collect: run a single cycle")
     parser.add_argument("--cycles", type=int, help="collect: stop after N cycles")
     parser.add_argument("action", nargs="?", default="status",
                         help="killswitch: status | stop | ack-warning | reset; storage: status | cleanup | restore; "
                              "running: collector | trader (exit 0 if that job is running); "
-                             "vol-data: status | fetch | load | report | forecast | condors | backtest | trend | monthly-trend | multi-trend")
+                             "vol-data: status | fetch | load | report | forecast | condors | backtest | trend | monthly-trend | multi-trend; "
+                             "overnight: report | refresh | fetch")
     parser.add_argument("--path", help="vol-data load: folder of OptionsDX files (.txt/.csv/.zip)")
     parser.add_argument("--authorization", help="killswitch reset: the exact authorization phrase")
     parser.add_argument("--from", dest="date_from", help="opra-widen: first day YYYY-MM-DD")
@@ -905,6 +927,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_midday(settings)
         if args.command == "vol-data":
             return cmd_vol_data(settings, args.action, args.path)
+        if args.command == "overnight":
+            return cmd_overnight(settings, args.action)
         if args.command == "running":
             return 0 if is_running(args.action) else 1
         if args.command == "trade":
