@@ -17,7 +17,7 @@ Requirement: starts reliably, reads config, connects to Alpaca, cannot submit tr
 
 Findings:
 - Paper account equity is $100,000 (plan assumes $20,000) → limits compute 5× larger.
-  Reset the paper account to $20,000 in the Alpaca dashboard, or we add an equity cap.
+  Owner's decision (2026-10-19): keep $100,000 for paper trading.
 - Paper account has options level 3 (spreads allowed).
 - Configured feeds are the free ones (IEX stocks, indicative options). Whether your plan
   includes OPRA options quotes is checked in Phase 2.
