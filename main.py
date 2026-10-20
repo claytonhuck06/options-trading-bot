@@ -27,6 +27,7 @@ Commands:
         --walk-forward TRAIN,TEST           Walk-forward test (window sizes in trading days).
         --grid strategy.KEY=V1,V2,...        Candidate settings the walk-forward chooses between.
     python main.py overnight [refresh|fetch|liquid]  Overnight-drift stock screener + walk-forward test (free daily bars).
+    python main.py overnight-basket pick|buy|sell|status   Paper overnight share basket (buy at close, sell at open).
     python main.py after-close              Daily summary pushed to the phone, then storage cleanup (scheduled).
     python main.py storage status|cleanup|restore [--date D]   Live-data storage: sizes, cleanup now, restore a day.
     python main.py notify --title T --message M [--priority urgent]   Send a phone alert (used by the scripts).
@@ -235,7 +236,9 @@ def _paper_session(settings):
 
     store = MarketDataStore(PROJECT_ROOT / settings.storage.sqlite_path)
     creds = load_alpaca_credentials(settings)
-    return TradingSession(settings, store, AlpacaPaperBroker(settings, creds), source=AlpacaMarketSource(settings, creds)), store
+    from execution.overnight_basket import OvernightBasket, open_db as open_basket_db
+    return TradingSession(settings, store, AlpacaPaperBroker(settings, creds), source=AlpacaMarketSource(settings, creds),
+                          basket=OvernightBasket(open_basket_db())), store
 
 
 def _retrying(call, wait: float = 15.0):
@@ -625,6 +628,7 @@ def cmd_after_close(settings) -> int:
     store = MarketDataStore(PROJECT_ROOT / settings.storage.sqlite_path)
     try:
         s = build_summary(store.conn, today, equity, [d for d in days if d <= today], is_trading_day)
+        s.lines += _basket_lines()
     finally:
         store.close()
     print(s.title)
@@ -865,9 +869,141 @@ def cmd_overnight(settings, action: str) -> int:
     return 0
 
 
+def _basket_lines() -> list[str]:
+    """One line for the daily summary about the overnight basket (it shares the account, so it moves the P&L)."""
+    from execution import overnight_basket as ob
+    if not ob.DB_PATH.exists():
+        return []
+    b = ob.OvernightBasket(ob.open_db())
+    try:
+        t, held = b.totals(), b.holdings()
+        last = b.conn.execute("SELECT pnl, ret FROM nights ORDER BY sold DESC LIMIT 1").fetchone()
+        out = f"Overnight basket: holding {len(held)} names tonight" if held else "Overnight basket: nothing held"
+        if last:
+            out += f"; last night ${last['pnl']:+,.0f} ({last['ret']:+.2%}); {t['nights']} nights total ${t['pnl']:+,.0f}"
+        return [out]
+    finally:
+        b.conn.close()
+
+
+def cmd_overnight_basket(settings, action: str) -> int:
+    """Overnight share basket on the PAPER account: pick | buy | sell | status (execution/overnight_basket.py)."""
+    import time as _t
+    from datetime import date, datetime, time, timedelta
+
+    from core.config import PROJECT_ROOT
+    from core.secrets import load_alpaca_credentials
+    from execution import overnight_basket as ob
+    from monitoring import alerts
+
+    if action == "pick":
+        from research.overnight_screener import LIQUID_DV, load_panel, open_db as open_bars, walk_forward
+        year = date.today().year
+        conn = open_bars(PROJECT_ROOT / "data" / "storage" / "studies" / "overnight_bars.db")
+        try:
+            end = date.fromisoformat(conn.execute("SELECT value FROM meta WHERE key='end'").fetchone()[0])
+            if end < date(year, 1, 1):
+                print(f"price data ends {end}; run 'python main.py overnight fetch' first so {year - 1} is complete")
+                return 2
+            wf = walk_forward(load_panel(conn, end), end, years=(year,), ns=(20,), min_dv=LIQUID_DV, shortfall_is_problem=False)
+        finally:
+            conn.close()
+        picks = [p for p in wf.picks[20][year] if p not in ob.EXCLUDED]
+        ob.save_picks(year, picks)
+        print(f"{year} picks ({len(picks)}): {', '.join(picks)}")
+        return 0
+
+    basket = ob.OvernightBasket(ob.open_db())
+    if action == "status":
+        t = basket.totals()
+        print(f"Held now: {basket.holdings() or 'nothing'}")
+        print(f"Nights traded: {t['nights']} ({t['up']} up); total P&L ${t['pnl']:,.2f}; compounded {t['compounded']:+.2%}")
+        for r in basket.conn.execute("SELECT * FROM nights ORDER BY sold DESC LIMIT 10"):
+            print(f"  {r['bought']} -> {r['sold']}: {r['names']} names, ${r['invested']:,.0f} in, "
+                  f"P&L ${r['pnl']:+,.2f} ({r['ret']:+.2%})")
+        return 0
+
+    from data.storage.db import MarketDataStore
+    from execution.alpaca_paper import AlpacaPaperBroker
+    from execution.broker import ReadOnlyBroker
+    from risk.state import RiskStateStore
+
+    creds = load_alpaca_credentials(settings)
+    broker = AlpacaPaperBroker(settings, creds)
+    clock = ReadOnlyBroker(settings, creds)
+    now = ob.now_utc()
+    today = now.astimezone(ob.ET).date()
+
+    def wait_until(t: time) -> None:
+        target = datetime.combine(today, t, ob.ET)
+        while ob.now_utc() < target:
+            _t.sleep(min(60.0, max(1.0, (target - ob.now_utc()).total_seconds())))
+
+    if action == "buy":
+        c = _retrying(clock.market_clock)
+        full = bool(c["is_open"]) and ob.full_trading_day(c["next_close"], now)
+        store = MarketDataStore(PROJECT_ROOT / settings.storage.sqlite_path)
+        try:
+            level = int(RiskStateStore(store).level(today))
+        finally:
+            store.conn.close()
+        picks = ob.load_picks(today.year)
+        prices = {}
+        for sym in picks:
+            try:
+                prices[sym] = clock.latest_underlying_trade(sym)["price"]
+            except Exception as exc:
+                print(f"no price for {sym}: {type(exc).__name__}")
+        res = basket.buy(broker, now, prices, picks, full, level, ob.STOP_FILE.exists())
+        print(res.summary(), flush=True)
+        if not res.submitted:
+            if picks and full and "already bought today" not in res.summary():
+                alerts.send("Overnight basket: not buying tonight", res.summary())
+            return 0
+        wait_until(time(16, 3))
+        notes = basket.sync(broker)
+        held = basket.holdings()
+        cost = sum(r["qty"] * r["cost"] for r in basket.conn.execute("SELECT qty, cost FROM holdings"))
+        msg = f"Bought {len(held)} names at the close, ${cost:,.0f} in total." + (" " + "; ".join(notes) if notes else "")
+        print(msg)
+        alerts.send("Overnight basket bought", msg, "low")
+        return 0
+
+    if action == "sell":
+        c = _retrying(clock.market_clock)
+        trading_day = today in _retrying(lambda: clock.trading_days(today, today))
+        res = basket.sell(broker, now, bool(c["is_open"]), trading_day)
+        print(res.summary(), flush=True)
+        if not trading_day or not (res.submitted or basket.working()):
+            return 0
+        wait_until(time(9, 33))
+        notes = basket.sync(broker)
+        if basket.holdings():                     # e.g. an opening-auction order was rejected: sell now instead
+            retry = basket.sell(broker, ob.now_utc(), True, True)
+            print(retry.summary(), flush=True)
+            _t.sleep(20)
+            notes += basket.sync(broker)
+        night = basket.settle_night(today)
+        left = basket.holdings()
+        if night:
+            t = basket.totals()
+            msg = (f"{night['names']} names: P&L ${night['pnl']:+,.2f} ({night['ret']:+.2%}) on ${night['invested']:,.0f}. "
+                   f"Running total {t['nights']} nights, ${t['pnl']:+,.2f} ({t['compounded']:+.2%}).")
+            print(msg)
+            alerts.send("Overnight basket sold", msg, "low")
+        if left or notes:
+            msg = (f"Still holding: {left}. " if left else "") + "; ".join(notes)
+            print(msg)
+            alerts.urgent("Overnight basket needs a look", msg)
+        return 0
+
+    print("overnight-basket needs: pick | buy | sell | status")
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="options-quant")
-    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study", "opra-widen", "backtest", "after-close", "storage", "notify", "running", "midday", "vol-data", "overnight"], nargs="?", default="config")
+    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study", "opra-widen", "backtest", "after-close", "storage", "notify", "running", "midday", "vol-data", "overnight", "overnight-basket"], nargs="?", default="config")
     parser.add_argument("--env", help="development | backtest | observation | paper | live")
     parser.add_argument("--once", action="store_true", help="collect: run a single cycle")
     parser.add_argument("--cycles", type=int, help="collect: stop after N cycles")
@@ -875,7 +1011,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="killswitch: status | stop | ack-warning | reset; storage: status | cleanup | restore; "
                              "running: collector | trader (exit 0 if that job is running); "
                              "vol-data: status | fetch | load | report | forecast | condors | backtest | trend | monthly-trend | multi-trend; "
-                             "overnight: report | refresh | fetch | liquid")
+                             "overnight: report | refresh | fetch | liquid; overnight-basket: pick | buy | sell | status")
     parser.add_argument("--path", help="vol-data load: folder of OptionsDX files (.txt/.csv/.zip)")
     parser.add_argument("--authorization", help="killswitch reset: the exact authorization phrase")
     parser.add_argument("--from", dest="date_from", help="opra-widen: first day YYYY-MM-DD")
@@ -929,6 +1065,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_vol_data(settings, args.action, args.path)
         if args.command == "overnight":
             return cmd_overnight(settings, args.action)
+        if args.command == "overnight-basket":
+            return cmd_overnight_basket(settings, args.action)
         if args.command == "running":
             return 0 if is_running(args.action) else 1
         if args.command == "trade":

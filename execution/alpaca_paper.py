@@ -10,7 +10,7 @@ from __future__ import annotations
 from alpaca.common.exceptions import APIError
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderClass, OrderSide, OrderType, PositionIntent, QueryOrderStatus, TimeInForce
-from alpaca.trading.requests import GetOrdersRequest, LimitOrderRequest, OptionLegRequest
+from alpaca.trading.requests import GetOrdersRequest, LimitOrderRequest, MarketOrderRequest, OptionLegRequest
 
 from core.config import ConfigError, Settings
 from core.secrets import AlpacaCredentials
@@ -69,6 +69,14 @@ class AlpacaPaperBroker:
                                 type=OrderType.LIMIT, time_in_force=TimeInForce.DAY, limit_price=round(limit_price, 2),
                                 client_order_id=client_order_id)
         return self._submit(req, client_order_id, qty, limit_price)
+
+    def submit_auction(self, client_order_id: str, symbol: str, side: str, qty: int, auction: str) -> BrokerOrder:
+        """Whole-share market order for the closing auction ("close", market-on-close), the opening auction
+        ("open", market-on-open) or right away during the session ("now"). Used by the overnight basket."""
+        tif = {"close": TimeInForce.CLS, "open": TimeInForce.OPG, "now": TimeInForce.DAY}[auction]
+        req = MarketOrderRequest(symbol=symbol, qty=qty, side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
+                                 time_in_force=tif, client_order_id=client_order_id)
+        return self._submit(req, client_order_id, qty, 0.0)
 
     def _submit(self, req, client_order_id: str, qty: int, limit_price: float) -> BrokerOrder:
         try:

@@ -31,7 +31,8 @@ class RecoveryReport:
         return self.recon is not None and self.recon.ok and not self.still_open_at_broker
 
 
-def recover(broker: BrokerAPI, book: OrderStore, hedge_shares: dict[str, int] | None = None) -> RecoveryReport:
+def recover(broker: BrokerAPI, book: OrderStore, hedge_shares: dict[str, int] | None = None,
+            expected_open_orders: set[str] | None = None) -> RecoveryReport:
     rep = RecoveryReport()
     for row in book.unresolved():
         rep.orders_checked += 1
@@ -47,7 +48,7 @@ def recover(broker: BrokerAPI, book: OrderStore, hedge_shares: dict[str, int] | 
         if not order.status.terminal:
             rep.still_open_at_broker.append(coid)
     rep.recon = reconcile(book.open_positions(), broker.positions(), broker.open_orders(), hedge_shares=hedge_shares,
-                          expected_open_orders=set())
+                          expected_open_orders=expected_open_orders or set())
     book.event("recovery", {"checked": rep.orders_checked, "filled": rep.orders_found_filled,
                             "never_sent": rep.orders_never_sent, "still_open": rep.still_open_at_broker,
                             "recon": rep.recon.summary()})

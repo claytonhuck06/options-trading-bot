@@ -80,8 +80,10 @@ def reconcile(book: list[Position], broker_positions: list[BrokerPosition], brok
         else:
             r.qty_mismatch[sym] = (e, a)
     for o in broker_open_orders:
+        if expected_open_orders is not None and o.client_order_id in expected_open_orders:
+            continue                              # e.g. the overnight basket's auction orders
         mine = o.client_order_id.startswith(our_order_prefix)
-        if not mine or (expected_open_orders is not None and o.client_order_id not in expected_open_orders):
+        if not mine or expected_open_orders is not None:
             r.unknown_open_orders.append(o.client_order_id or o.broker_id)
     r.uncovered_shorts = uncovered_short_symbols(broker_positions)
     return r

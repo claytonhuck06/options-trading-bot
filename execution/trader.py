@@ -69,8 +69,9 @@ class CycleReport:
 
 class TradingSession:
     def __init__(self, settings: Settings, store: MarketDataStore, broker: BrokerAPI,
-                 now=lambda: datetime.now(timezone.utc), sleep=_time.sleep, source=None):
+                 now=lambda: datetime.now(timezone.utc), sleep=_time.sleep, source=None, basket=None):
         self.s, self.store, self.broker = settings, store, broker
+        self.basket = basket                     # overnight share basket (execution/overnight_basket.py), same account
         self.source = source                     # live market data for the weekly spread (outside the collector's range)
         self._live_symbols: set[str] = set()     # contracts quoted live instead of from the collector's database
         self._live_cache: dict[str, LegQuote] = {}
@@ -141,6 +142,17 @@ class TradingSession:
         result = price_snapshot(snap, self.s.pricing, rate_for)
         return result, save_pricing(self.store, result)
 
+    def _expected_extras(self, assignment_shares: int) -> tuple[dict[str, int] | None, set[str]]:
+        """Shares and open orders that belong to us but not to the options book: assignment shares being
+        unwound, and the overnight basket's holdings and its auction orders."""
+        hedge = {self.underlying: assignment_shares} if assignment_shares else {}
+        orders: set[str] = set()
+        if self.basket is not None:
+            held, orders = self.basket.expectations(self.broker)
+            for sym, q in held.items():
+                hedge[sym] = hedge.get(sym, 0) + q
+        return hedge or None, orders
+
     # --- lifecycle -------------------------------------------------------------------
     def startup(self):
         """Morning check before the day starts: settle unknown orders, recognise overnight assignments,
@@ -157,8 +169,8 @@ class TradingSession:
             self._handle_assignments(positions, self.broker.positions(), [])
         except Exception as exc:                 # never let the check itself stop the reconciliation below
             log.warning("assignment check failed at startup: %s", exc)
-        shares = self._assignment_shares()
-        rep = recover(self.broker, self.book, hedge_shares={self.underlying: shares} if shares else None)
+        hedge, extra_orders = self._expected_extras(self._assignment_shares())
+        rep = recover(self.broker, self.book, hedge_shares=hedge, expected_open_orders=extra_orders)
         if not rep.safe_to_resume:
             self.state.escalate(Level.HALTED, "startup_recovery_unsafe", today, rep.recon.summary() if rep.recon else None)
             alerts.urgent("Trading halted at startup", "The broker's positions do not match our records: "
@@ -209,8 +221,9 @@ class TradingSession:
         broker_positions = self.broker.positions()
         positions = self._handle_assignments(positions, broker_positions, rep.notes)
         shares = self._assignment_shares()
+        hedge, extra_orders = self._expected_extras(shares)
         recon = reconcile(positions, broker_positions, self.broker.open_orders(),
-                          hedge_shares={self.underlying: shares} if shares else None, expected_open_orders=set())
+                          hedge_shares=hedge, expected_open_orders=extra_orders)
         rep.reconciled = recon.ok
         if not recon.ok:
             rep.notes.append(recon.summary())

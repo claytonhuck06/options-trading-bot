@@ -64,6 +64,7 @@ class BrokerAPI(Protocol):
 
     def submit_multileg(self, client_order_id: str, legs: list[OrderLeg], qty: int, limit_price: float) -> BrokerOrder: ...
     def submit_stock(self, client_order_id: str, symbol: str, side: str, qty: int, limit_price: float) -> BrokerOrder: ...
+    def submit_auction(self, client_order_id: str, symbol: str, side: str, qty: int, auction: str) -> BrokerOrder: ...
     def get_order(self, broker_id: str) -> BrokerOrder: ...
     def find_order(self, client_order_id: str) -> BrokerOrder | None: ...
     def cancel_order(self, broker_id: str) -> None: ...
@@ -143,6 +144,12 @@ class SimulatedBroker:
     def submit_stock(self, client_order_id, symbol, side, qty, limit_price):
         sign = 1 if side == "buy" else -1
         return self.submit_multileg(client_order_id, [OrderLeg(symbol, side, 1, "stock")], qty, sign * limit_price)
+
+    def submit_auction(self, client_order_id, symbol, side, qty, auction):
+        """Market order filled at leg_prices[symbol] on the first status check (the auction has happened)."""
+        price = self.leg_prices.get(symbol, 1.0)
+        sign = 1 if side == "buy" else -1
+        return self.submit_multileg(client_order_id, [OrderLeg(symbol, side, 1, "stock")], qty, sign * price)
 
     def get_order(self, broker_id):
         o = self.orders[broker_id]
