@@ -267,3 +267,37 @@ so before Phase 3:
    carried forward (section B).
 4. Nothing else changes. The 25% credit minimum stays as written, even though it blocks most entries at 10 and 16
    delta. That's reported, not adjusted.
+
+### Amendment 4 (2026-10-20): volatility-surface checks, report only
+
+*Requested by the owner and written before any exit, mark or profit/loss was computed.*
+
+These are run on the **chosen setting only** and reported next to D2. They **can't** change which setting is
+chosen, the pass/fail result, or the go/no-go. Any filter that looks useful would need its own new pre-registered
+test.
+
+1. **Short-term term structure:** the chosen setting's trades split by the previous day's VIX9D ÷ VIX
+   (below 1 = normal "contango"; 1 or above = short-term fear higher than 30-day).
+2. **30-day vs 3-month term structure:** the same split by the previous day's VIX ÷ VIX3M.
+3. **Skew steepness at entry:** 25-delta put IV − 25-delta call IV on the trade's own expiry, from our own IVs at
+   the entry snapshot. Trades are split by whether that day's skew was above or below its own trailing
+   252-trading-day median (computed every day for the target expiry, using only past days).
+4. For each split: number of trades, average profit per trade, win rate, worst trade.
+5. Also reported: the chosen setting re-run with a term-structure filter (enter only when the previous day's
+   VIX < VIX3M), for information only.
+
+### Phase 3 implementation details (2026-10-20, before any profit/loss was computed)
+
+- **Daily order:** exits on open positions are checked first at each snapshot, then the day's entry (if the week
+  has none yet and fewer than 3 are open). A position can't exit on its entry day.
+- **No look-ahead in selection:** all 162 settings are simulated on discovery entries (2016–2021) only. Only the
+  chosen setting is then run on the full period. Its discovery trades are identical in both runs.
+- **Equity and drawdown:** fixed $100,000 plus realized P&L plus open positions marked at their executable cost to
+  close (carried forward on days a leg fails the data check). Drawdown is measured on this daily marked equity.
+- **Early-assignment guard dividend:** SPY's quarterly dividend is estimated as 0.35% of the spot price (about
+  1.4% a year). Ex-dividend dates use the existing rule (third Friday of Mar/Jun/Sep/Dec). The time value check
+  uses the mid price; any resulting exit is still filled at bid/ask.
+- **Fees:** $0.05 × 4 legs × contracts on entry and again on exit.
+- **Intraday stop estimate (D2):** for each held day, SPY's intraday high and low from the minute bars are applied
+  to each leg with the previous snapshot's implied volatility (sticky strike). If the stop would have been hit, the
+  exit is estimated at the stop level. Labelled "estimated".
