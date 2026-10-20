@@ -1,0 +1,71 @@
+# Iron condor rules, pre-registered 2026-10-20 (Phase 0). Machine-readable copy of
+# docs/research/iron_condor_preregistration.md — that document wins if they disagree.
+# Not loaded by the running system. Do not edit after data has been examined; add an amendment instead.
+
+underlying: SPY
+multiplier: 100
+
+periods:
+  discovery: {start: 2016-01-01, end: 2021-12-31}
+  confirmation: {start: 2022-01-01, end: null}    # null = last available day
+  min_discovery_years: 4
+
+sizing:
+  reference_equity: 100000.0        # fixed, no compounding
+  risk_per_condor_pct: 0.01
+  max_open_condors: 3
+  max_total_risk_pct: 0.03
+
+entry:
+  max_new_per_week: 1
+  dte_tolerance_days: 7
+  min_credit_pct_of_width: 0.25
+  event_window_trading_days: 5      # FOMC statement or CPI release
+  intraday_snapshot_et: "10:30"     # Phase 5 only; EOD data uses the dataset's snapshot
+
+exits:
+  hard_exit_dte: 7
+  assignment_extrinsic_threshold: 0.05
+
+costs:
+  fee_per_contract_per_leg_per_side: 0.05
+  stress_extra_spread_fraction: 0.25
+  optimistic_toward_mid_fraction: 0.25   # reported only
+
+grid:                                # 3 x 3 x 2 x 3 x 3 = 162 combinations
+  target_dte: [30, 45, 60]
+  short_delta: [0.10, 0.16, 0.20]
+  wing_width: [5, 10]
+  profit_target_pct: [0.25, 0.50, null]   # null = hold, no profit target
+  stop_multiple: [1.5, 2.0, null]         # loss as a multiple of credit; null = no stop
+
+fixed_in_grid:
+  iv_rank_filter: false
+  event_filter: true
+  time_exit_dte: 21
+
+sensitivity:                         # chosen setting only; reported, never used for selection
+  iv_rank_filter: {enabled: true, min_iv_rank: 30, source: VIX, lookback_days: 252}
+  event_filter: false
+  time_exit_dte: 14
+  intraday_stop_estimate: true
+
+selection:
+  score: avg_pnl_per_trade_pct_of_max_loss
+  smoothing: mean_with_one_step_neighbours
+  min_discovery_trades: 60
+
+pass_bars:
+  min_t_stat_per_trade: 2.0
+  max_drawdown_pct: 0.10
+  drop_best_trades_fraction: 0.05
+  crash_windows:
+    - {name: "Feb 2018", start: 2018-02-01, end: 2018-02-28}
+    - {name: "COVID 2020", start: 2020-02-01, end: 2020-04-30}
+    - {name: "2022 bear", start: 2022-01-01, end: 2022-12-31}
+    - {name: "Aug 2024", start: 2024-08-01, end: 2024-08-31}
+    - {name: "Apr 2025", start: 2025-04-01, end: 2025-04-30}
+
+databento:
+  phase: 5
+  budget_usd_without_asking: 20.0

@@ -183,6 +183,13 @@ Requirement: orders placed, modified, cancelled, filled and reconciled correctly
       downloaded strikes (priced from nearest real quotes instead)
 - [ ] Multi-day strategy and multi-day backtest engine — not built (no edge). Daily-loss-limit question moot for now
 
+## Iron condor pivot (plan: docs/IRON_CONDOR_PLAN.md)
+The mispricing strategy above keeps running unchanged while the condor is researched.
+- [x] Phase 0 (2026-10-20): owner decisions recorded; rules, 162-combination grid, selection method and
+      7 pass/fail bars pre-registered in `docs/research/iron_condor_preregistration.md` before any condor data was seen
+- [ ] Phase 1: free daily SPY option chains (10+ years), VIX, FOMC and CPI calendars, data quality report
+- [ ] Phase 2: condor builder · Phase 3: backtest · Phase 4: owner go/no-go
+
 ## Phase 7 — Backtesting (requires suitable historical quote data)
 ## Phase 8 — Observation mode, then 60–90+ days of paper trading
 ## Phase 9 — Qwen analyst (Ollama installed; no model pulled yet)
