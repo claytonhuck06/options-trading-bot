@@ -55,4 +55,19 @@ dead company (down 50%+ in a year and below the 200-day average), no catalyst ne
 
 ## Amendments
 
-*(none yet)*
+**2026-10-21, before any v3 result was computed (the first run was stopped during the test suite; no
+numbers seen).** Owner asked: if the trade isn't in the green at the close, hold it a few more days. This becomes
+the **primary exit**, replacing "cover at the close":
+
+- At day *t*'s close, if the close is **below** the entry (the short is in profit): cover at the close.
+- Otherwise hold, and cover at the **first close on *t+1*, *t+2* or *t+3*** that is below the entry; if none,
+  cover at *t+3*'s close no matter what. ("2–3 days" → 3 days primary; **2 days** reported as robustness.)
+- Holding overnight costs a borrow fee of **20% a year** on the position per calendar night held (doubled in the
+  stress test). Real fees on hard-to-borrow stocks are often far higher; this is stated in the report.
+- With a 20% stop (robustness): checked each day; if a later day opens above the stop, out at that open.
+- Because positions can now last up to four days, the limit becomes **at most 3 open at once** (new ones only
+  when a slot is free, biggest gaps first), matching the project's 3-open risk pool. Positions are marked to the
+  daily close.
+- Also reported: same-day only (the original v3 exit).
+
+Bars are unchanged.

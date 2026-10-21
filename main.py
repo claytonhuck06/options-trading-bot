@@ -30,6 +30,7 @@ Commands:
     python main.py overnight-basket pick|buy|sell|status   Paper overnight share basket (buy at close, sell at open).
     python main.py gap-puts [fetch|sample]  Puts on unexplained 30%+ overnight gaps (free bars, news, option trades).
     python main.py spike-short-v2       Webull-checklist version: +75% dead-company gaps, intraday peak entry.
+    python main.py spike-short-v3       Same stocks, short at the open and cover at the close.
     python main.py spike-short [fetch]  Short-the-small-stock-spike backtest, shortable stocks only (free daily bars).
     python main.py momentum plan|rebalance|resize|status   Paper dual momentum (top 2 of 5 ETFs, monthly).
     python main.py after-close              Daily summary pushed to the phone, then storage cleanup (scheduled).
@@ -1116,6 +1117,27 @@ def cmd_gap_puts(settings, action: str) -> int:
     return 0
 
 
+def cmd_spike_short_v3(settings) -> int:
+    """Checklist stocks, short open / cover close; uses the v2 caches."""
+    from datetime import date
+
+    from core.config import PROJECT_ROOT
+    from core.secrets import load_alpaca_credentials
+    from research import spike_short, spike_short_v2, spike_short_v3
+
+    studies = PROJECT_ROOT / "data" / "storage" / "studies"
+    bars = spike_short.open_db(studies / "spike_bars.db")
+    conn = spike_short_v2.open_db(studies / "spike_v2.db")
+    try:
+        path, go = spike_short_v3.run(load_alpaca_credentials(settings), bars, conn, PROJECT_ROOT / "docs" / "research",
+                                      date.today())
+    finally:
+        bars.close()
+        conn.close()
+    print(f"{'GO' if go else 'NO-GO'}. Report written: {path.relative_to(PROJECT_ROOT)}")
+    return 0
+
+
 def cmd_spike_short_v2(settings) -> int:
     """Webull-checklist short test; needs 'python main.py spike-short fetch' data first."""
     from datetime import date
@@ -1276,7 +1298,7 @@ def cmd_overnight_basket(settings, action: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="options-quant")
-    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study", "opra-widen", "backtest", "after-close", "storage", "notify", "running", "midday", "vol-data", "overnight", "overnight-basket", "momentum", "spike-short", "gap-puts", "spike-short-v2"], nargs="?", default="config")
+    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study", "opra-widen", "backtest", "after-close", "storage", "notify", "running", "midday", "vol-data", "overnight", "overnight-basket", "momentum", "spike-short", "gap-puts", "spike-short-v2", "spike-short-v3"], nargs="?", default="config")
     parser.add_argument("--env", help="development | backtest | observation | paper | live")
     parser.add_argument("--once", action="store_true", help="collect: run a single cycle")
     parser.add_argument("--cycles", type=int, help="collect: stop after N cycles")
@@ -1338,6 +1360,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_vol_data(settings, args.action, args.path)
         if args.command == "overnight":
             return cmd_overnight(settings, args.action)
+        if args.command == "spike-short-v3":
+            return cmd_spike_short_v3(settings)
         if args.command == "spike-short-v2":
             return cmd_spike_short_v2(settings)
         if args.command == "gap-puts":
