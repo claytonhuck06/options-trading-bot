@@ -123,6 +123,7 @@ You'll need a free [Alpaca](https://alpaca.markets) paper account. Keys are read
 .venv/bin/python main.py after-close --env paper    # daily summary to the phone + storage cleanup
 .venv/bin/python main.py storage status --env paper # live-data storage: status | cleanup | restore --date D
 .venv/bin/python main.py notify --env paper --title "Hi" --message "test"   # phone alert
+.venv/bin/python main.py spike-short-shadow morning|close|status   # spike-short shadow log (no orders); --dry-run saves nothing
 .venv/bin/python -m pytest                 # test suite
 ```
 
@@ -148,6 +149,10 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.optionsquant.collect
 ### Dual momentum (paper)
 
 `com.optionsquant.momentum` runs `scripts/run_momentum.sh` at 8:10, 10:00 and 1:00 Central on weekdays. On the first trading day of each month (or at the next run, if one was missed) it holds the top 2 of SPY/EFA/IEF/VNQ/DBC by 12-month return, each only while it's above its 10-month average: a deep in-the-money call (delta ~0.80, 75+ days out) per fund with about 10% of equity in premium each, or shares for DBC and for any fund whose option quote is too wide. Calls are rolled before 40 days are left. Its P&L is kept out of the kill switch; it alerts on its own at $5k below its value after the month's rebalance. Other days it exits at once. `python main.py momentum plan` shows this month's signal; `momentum status` shows holdings; `momentum resize` trades this month's holdings to a new size right away. Logs: `logs/momentum_<month>.log`.
+
+### Spike-short shadow log (research only, no orders)
+
+`com.optionsquant.spike-shadow` runs `scripts/run_spike_shadow.sh` at 8:35 and 3:30 Central on weekdays. In the morning it screens that day's checklist shorts (opened +75% or more, prior close $0.50–$8, down 50%+ in a year and below the 200-day average, no news since 9:30 ET yesterday, short-sale rule not in force), takes the 3 biggest gaps, and records how many shares Interactive Brokers has to lend and at what fee right then (a position is 2.7% of $100k). After the close it records what the trade would have done: out at +50% if the day's high reached it, otherwise at the close, after trading costs and a 1% locate fee. It never places an order. Phone alerts on signal days. Saved to `data/storage/studies/spike_shadow.db`; `python main.py spike-short-shadow status` shows the running totals. Logs: `logs/spike_shadow_<month>.log`.
 
 The `.plist` files in `scripts/` contain absolute paths for the original machine; edit them to match your project folder before installing.
 

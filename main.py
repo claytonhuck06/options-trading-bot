@@ -32,6 +32,8 @@ Commands:
     python main.py spike-short-v2       Webull-checklist version: +75% dead-company gaps, intraday peak entry.
     python main.py spike-short-v3       Same stocks, short at the open and cover at the close.
     python main.py spike-short-v4       Enhanced: 50% squeeze stop, 1.5%-risk sizing, IBKR locate/borrow costs.
+    python main.py spike-short-shadow morning|close|status [--dry-run]   Forward shadow log of the day-trade-only
+                                        checklist short: logs signals + IBKR borrow, simulated exit. No orders.
     python main.py spike-short [fetch]  Short-the-small-stock-spike backtest, shortable stocks only (free daily bars).
     python main.py momentum plan|rebalance|resize|status   Paper dual momentum (top 2 of 5 ETFs, monthly).
     python main.py after-close              Daily summary pushed to the phone, then storage cleanup (scheduled).
@@ -1139,6 +1141,68 @@ def cmd_spike_short_v4(settings) -> int:
     return 0
 
 
+def cmd_spike_short_shadow(settings, action: str, dry_run: bool) -> int:
+    """Forward shadow log (v4 rules, day-trade only). Read-only data; places no orders. --dry-run: nothing saved."""
+    from datetime import datetime
+
+    from core.config import PROJECT_ROOT
+    from core.secrets import load_alpaca_credentials
+    from monitoring import alerts
+    from research import spike_short_shadow as sh
+    from research.spike_short import ET
+
+    path = PROJECT_ROOT / "data" / "storage" / "studies" / "spike_shadow.db"
+    conn = sh.open_db(":memory:" if dry_run else path)
+    now = datetime.now(ET)
+    today = now.date()
+    try:
+        if action == "status":
+            t = sh.totals(conn)
+            print(f"{t['days']} mornings logged, {t['signals']} signals ({t['placeable']} with enough IBKR shares), "
+                  f"{t['settled']} settled: ${t['pnl']:+,.0f} total, {t['wins']} winners, {t['stops']} stopped; "
+                  f"placeable only: {t['settled_placeable']} trades, ${t['pnl_placeable']:+,.0f}.")
+            for r in conn.execute("SELECT day, symbol, status, gap, ibkr_available, shares_needed, ibkr_fee, net, pnl "
+                                  "FROM shadow ORDER BY day DESC, rank LIMIT 20"):
+                print("  ", r)
+            return 0
+        recent, history, news, ibkr, bar = sh.live_fns(load_alpaca_credentials(settings), conn, today)
+        if action == "morning":
+            if today.weekday() >= 5 or now.time() < sh.MORNING_FROM:
+                print(f"Not a trading morning yet ({now:%a %H:%M} ET); the screen runs from 9:31 ET on weekdays.")
+                return 0
+            universe, bars = recent()
+            rows, note = sh.morning(conn, today, universe, bars, history, news, ibkr)
+            print(f"{today} morning: {note}." + (" (dry run, nothing saved)" if dry_run else ""))
+            if rows:
+                msg = sh.morning_message(rows)
+                print(msg)
+                if not dry_run:
+                    alerts.send(f"Spike-short shadow {today}", msg, "default")
+            return 0
+        if action == "close":
+            if dry_run:                                   # nothing saved this morning: settle today's screen now
+                universe, bars = recent()
+                rows, note = sh.morning(conn, today, universe, bars, history, news, ibkr)
+                print(f"{today} morning (dry run): {note}.")
+                if now.time() < sh.CLOSE_FROM:            # settle on the day's bar so far
+                    print("Before the close: settling on today's bar so far.")
+                    now = now.replace(hour=sh.CLOSE_FROM.hour, minute=sh.CLOSE_FROM.minute)
+            done = sh.close(conn, today, now, bar)
+            t = sh.totals(conn)
+            if not done:
+                print(f"{today} close: nothing to settle.")
+                return 0
+            msg = sh.close_message(done, t)
+            print(msg + (" (dry run, nothing saved)" if dry_run else ""))
+            if not dry_run:
+                alerts.send(f"Spike-short shadow {today}: closed", msg, "low")
+            return 0
+    finally:
+        conn.close()
+    print("spike-short-shadow needs: morning | close | status")
+    return 2
+
+
 def cmd_spike_short_v3(settings) -> int:
     """Checklist stocks, short open / cover close; uses the v2 caches."""
     from datetime import date
@@ -1320,7 +1384,7 @@ def cmd_overnight_basket(settings, action: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="options-quant")
-    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study", "opra-widen", "backtest", "after-close", "storage", "notify", "running", "midday", "vol-data", "overnight", "overnight-basket", "momentum", "spike-short", "gap-puts", "spike-short-v2", "spike-short-v3", "spike-short-v4"], nargs="?", default="config")
+    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study", "opra-widen", "backtest", "after-close", "storage", "notify", "running", "midday", "vol-data", "overnight", "overnight-basket", "momentum", "spike-short", "gap-puts", "spike-short-v2", "spike-short-v3", "spike-short-v4", "spike-short-shadow"], nargs="?", default="config")
     parser.add_argument("--env", help="development | backtest | observation | paper | live")
     parser.add_argument("--once", action="store_true", help="collect: run a single cycle")
     parser.add_argument("--cycles", type=int, help="collect: stop after N cycles")
@@ -1344,6 +1408,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--walk-forward", help="backtest: TRAIN,TEST window sizes in trading days")
     parser.add_argument("--grid", action="append", default=[], help="backtest: strategy.KEY=V1,V2 candidate settings")
     parser.add_argument("--equity", type=float, default=100_000.0, help="backtest: starting equity")
+    parser.add_argument("--dry-run", action="store_true", help="spike-short-shadow: run against live data, save nothing")
     parser.add_argument("--title", help="notify: alert title")
     parser.add_argument("--message", help="notify: alert text")
     parser.add_argument("--priority", default="default", help="notify: min | low | default | high | urgent")
@@ -1382,6 +1447,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_vol_data(settings, args.action, args.path)
         if args.command == "overnight":
             return cmd_overnight(settings, args.action)
+        if args.command == "spike-short-shadow":
+            return cmd_spike_short_shadow(settings, args.action, args.dry_run)
         if args.command == "spike-short-v4":
             return cmd_spike_short_v4(settings)
         if args.command == "spike-short-v3":
