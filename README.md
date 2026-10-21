@@ -123,7 +123,7 @@ You'll need a free [Alpaca](https://alpaca.markets) paper account. Keys are read
 .venv/bin/python main.py after-close --env paper    # daily summary to the phone + storage cleanup
 .venv/bin/python main.py storage status --env paper # live-data storage: status | cleanup | restore --date D
 .venv/bin/python main.py notify --env paper --title "Hi" --message "test"   # phone alert
-.venv/bin/python main.py spike-short-shadow morning|close|status   # spike-short shadow log (no orders); --dry-run saves nothing
+.venv/bin/python main.py spike-short-shadow morning|close|status   # spike-short shadow log, 2.7% and 40% accounts (no orders); --dry-run saves nothing
 .venv/bin/python -m pytest                 # test suite
 ```
 
@@ -152,7 +152,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.optionsquant.collect
 
 ### Spike-short shadow log (research only, no orders)
 
-`com.optionsquant.spike-shadow` runs `scripts/run_spike_shadow.sh` at 8:35 and 3:30 Central on weekdays. In the morning it screens that day's checklist shorts (opened +75% or more, prior close $0.50–$8, down 50%+ in a year and below the 200-day average, no news since 9:30 ET yesterday, short-sale rule not in force), takes the 3 biggest gaps, and records how many shares Interactive Brokers has to lend and at what fee right then (a position is 2.7% of $100k). After the close it records what the trade would have done: out at +50% if the day's high reached it, otherwise at the close, after trading costs and a 1% locate fee. It never places an order. Phone alerts on signal days. Saved to `data/storage/studies/spike_shadow.db`; `python main.py spike-short-shadow status` shows the running totals. Logs: `logs/spike_shadow_<month>.log`.
+`com.optionsquant.spike-shadow` runs `scripts/run_spike_shadow.sh` at 8:35 and 3:30 Central on weekdays. In the morning it screens that day's checklist shorts (opened +75% or more, prior close $0.50–$8, down 50%+ in a year and below the 200-day average, no news since 9:30 ET yesterday, short-sale rule not in force), takes the 3 biggest gaps, and records how many shares Interactive Brokers has to lend and at what fee right then (a position is 2.7% of $100k). After the close it records what the trade would have done: out at +50% if the day's high reached it, otherwise at the close, after trading costs and a 1% locate fee. It keeps two simulated paper accounts, each starting at $100,000 and growing with its results: one shorting 2.7% of the account per trade (the rules) and one shorting 40% (information only; in the backtest 40% had a 68% worst drop). For each signal it also records whether each size could realistically be placed: IBKR shares available versus shares needed, and the dollar size versus the stock's dollar volume in the first 5 and 15 minutes and the whole day ("fillable" = at most 10% of the first 15 minutes). It never places an order. Phone alerts on signal days and after the close, showing both accounts. Saved to `data/storage/studies/spike_shadow.db`; `python main.py spike-short-shadow status` shows the running totals. Logs: `logs/spike_shadow_<month>.log`.
 
 The `.plist` files in `scripts/` contain absolute paths for the original machine; edit them to match your project folder before installing.
 

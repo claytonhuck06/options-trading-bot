@@ -1158,14 +1158,18 @@ def cmd_spike_short_shadow(settings, action: str, dry_run: bool) -> int:
     try:
         if action == "status":
             t = sh.totals(conn)
-            print(f"{t['days']} mornings logged, {t['signals']} signals ({t['placeable']} with enough IBKR shares), "
-                  f"{t['settled']} settled: ${t['pnl']:+,.0f} total, {t['wins']} winners, {t['stops']} stopped; "
-                  f"placeable only: {t['settled_placeable']} trades, ${t['pnl_placeable']:+,.0f}.")
-            for r in conn.execute("SELECT day, symbol, status, gap, ibkr_available, shares_needed, ibkr_fee, net, pnl "
+            print(sh.summary_line(t))
+            print(f"{t['wins']} winners, {t['stops']} stopped; worst trade in the 40% account {t['worst_40']:+.1%} "
+                  f"of it; placeable at 2.7% only: {t['settled_placeable']} trades, ${t['pnl_placeable']:+,.0f}.")
+            print("   day, symbol, status, gap, IBKR shares, needed 2.7% / 40%, fee, net, P&L 2.7% / 40%, "
+                  "first-15-min $, fillable 2.7% / 40%")
+            for r in conn.execute("SELECT day, symbol, status, round(gap, 2), ibkr_available, shares_needed, "
+                                  "shares_needed_40, ibkr_fee, round(net, 3), round(pnl), round(pnl_40), "
+                                  "round(dv_first15), fillable_27, fillable_40 "
                                   "FROM shadow ORDER BY day DESC, rank LIMIT 20"):
                 print("  ", r)
             return 0
-        recent, history, news, ibkr, bar = sh.live_fns(load_alpaca_credentials(settings), conn, today)
+        recent, history, news, ibkr, bar, minutes = sh.live_fns(load_alpaca_credentials(settings), conn, today)
         if action == "morning":
             if today.weekday() >= 5 or now.time() < sh.MORNING_FROM:
                 print(f"Not a trading morning yet ({now:%a %H:%M} ET); the screen runs from 9:31 ET on weekdays.")
@@ -1187,7 +1191,7 @@ def cmd_spike_short_shadow(settings, action: str, dry_run: bool) -> int:
                 if now.time() < sh.CLOSE_FROM:            # settle on the day's bar so far
                     print("Before the close: settling on today's bar so far.")
                     now = now.replace(hour=sh.CLOSE_FROM.hour, minute=sh.CLOSE_FROM.minute)
-            done = sh.close(conn, today, now, bar)
+            done = sh.close(conn, today, now, bar, minutes)
             t = sh.totals(conn)
             if not done:
                 print(f"{today} close: nothing to settle.")
