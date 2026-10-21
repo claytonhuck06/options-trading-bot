@@ -84,3 +84,17 @@ day, which isn't modelled here.
 **The 35 trades still red at the first close** (of 203) averaged about −22% after the extra days; covering them
 at that first close instead would have been far worse. Holding rescues some, but the worst squeezes (SDOT −239%,
 IXHL −126%, VRM −122%) lose more than the whole position.
+
+**20% stop (pre-registered robustness row above):** F0 drops to +3.25% per trade (54% winners, 45% stopped
+out), +4.8%/yr. These stocks often trade 20%+ above the open before fading.
+
+**Puts instead of shorting (information only, 2026-10-21).** Checklist signals since 2024-02-15 (free option data
+start): 125. Listed puts 7–45 days out: **2**. Puts that traded 9:45–10:30: **0**. Puts are not a way into these
+stocks.
+
+**Interactive Brokers' public shortable list (ftp2.interactivebrokers.com, user "shortstock", free), checked
+2026-10-21 14:55 ET** against the 35 signals from the last 120 trading days: IBKR shows shares available to
+borrow on **33 of 35** (from 100 to 3.6M shares), at annual borrow fees mostly 40%–670% (median ~120%). Alpaca
+lists all 35 as not shortable. Caveats: this is availability *today*, not on the spike morning (when demand is
+highest), and the test assumed a 20%/yr fee; the sensitivity check above shows fees up to 300%/yr barely move
+the result because most trades close the same day.
