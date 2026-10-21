@@ -929,7 +929,7 @@ def _momentum_lines() -> list[str]:
 
 def cmd_momentum(settings, action: str) -> int:
     """Dual momentum on the PAPER account: plan | rebalance | resize | status (execution/dual_momentum_paper.py).
-    resize = trade this month's holdings to the current size now (after changing dmp.SLEEVE)."""
+    resize = re-plan this month's holdings at today's size and prices and trade to them now."""
     import json
     import time as _t
     from datetime import datetime, time, timedelta
@@ -949,6 +949,7 @@ def cmd_momentum(settings, action: str) -> int:
                   f"targets {r['targets']}; {'done ' + r['done'] if r['done'] else 'NOT DONE'}")
         return 0
 
+    from data.collectors.alpaca_source import AlpacaMarketSource
     from data.storage.db import MarketDataStore
     from execution.alpaca_paper import AlpacaPaperBroker
     from execution.broker import ReadOnlyBroker
@@ -962,83 +963,124 @@ def cmd_momentum(settings, action: str) -> int:
     last_month = _retrying(lambda: clock.trading_days((first - timedelta(days=1)).replace(day=1), first - timedelta(days=1)))
     month_end = max(last_month)
     resize = action == "resize"
-    if resize:
-        action = "rebalance"
-    elif action == "rebalance":
+    broker = AlpacaPaperBroker(settings, creds)
+
+    if action == "rebalance":
         row = book.month(month_end)
         if row is not None and row["done"]:
-            print(f"{month_end:%B} signal already traded on {row['done']}; nothing to do")
-            return 0
-    if action == "rebalance" and today not in _retrying(lambda: clock.trading_days(today, today)):
-        print("market closed today; will try next weekday")
+            book.sync(broker)
+            due = [s for s in json.loads(row["targets"]) if dmp.is_option(s)
+                   and (dmp.expiry_of(s) - today).days <= dmp.FORCE_DTE]
+            if not due:
+                msg = book.loss_alert(month_end, book.value(_retrying(broker.positions)))
+                if msg:
+                    print(msg)
+                    alerts.urgent("Dual momentum loss alert", msg)
+                print(f"{month_end:%B} signal already traded on {row['done']}; nothing to do")
+                return 0
+            print(f"calls near expiry, rolling: {', '.join(due)}")
+    if action in ("rebalance", "resize") and today not in _retrying(lambda: clock.trading_days(today, today)):
+        print("market closed today; will try at the next run")
         return 0
     try:
         decision = dmp.decide(dmp.load_live(), month_end)
     except Exception as exc:
         print(f"no decision: {exc}")
-        if action == "rebalance":
+        if action != "plan":
             alerts.urgent("Dual momentum: no decision", f"Couldn't compute the {month_end} signal: {exc}. "
                           "The next scheduled run retries.")
         return 0                                  # already alerted; a non-zero exit would send a second alert
-    prices = {}
-    for s in decision.held:
-        prices[s] = _retrying(lambda s=s: clock.latest_underlying_trade(s))["price"]
+    prices = {s: _retrying(lambda s=s: clock.latest_underlying_trade(s))["price"] for s in decision.held}
+    source = AlpacaMarketSource(settings, creds)
 
     if action == "plan":
-        equity = AlpacaPaperBroker(settings, creds).equity()
+        equity = broker.equity()
         print(f"Signal from {month_end}:")
         for s in dmp.ASSETS:
             print(f"  {s}: 12-month return {decision.scores[s]:+.1%}, trend {'on' if decision.trend_on[s] else 'off'}")
-        tgt = dmp.target_shares(decision, equity, prices)
-        print("Hold: " + (", ".join(f"{q} {s} (~${q * prices[s]:,.0f})" for s, q in tgt.items()) or "all cash"))
+        for fund in decision.held:
+            budget = dmp.fund_budget(decision, fund, equity)
+            pick = None if fund in dmp.SHARES_ONLY else dmp.choose_call(source, fund, today, budget)
+            if isinstance(pick, dmp.CallPick):
+                print(f"  hold {fund}: {pick.qty} x {pick.symbol} (delta {pick.delta or 0:.2f}, {pick.bid:.2f} x "
+                      f"{pick.ask:.2f}, ~${pick.qty * pick.ask * 100:,.0f} of a ${budget:,.0f} budget)")
+            else:
+                why = f" ({pick})" if pick else ""
+                print(f"  hold {fund}: {round(budget / prices[fund])} shares (~${budget:,.0f}){why}")
+        if not decision.held:
+            print("  hold: all cash")
         row = book.month(month_end)
         print(f"This month's rebalance: {'done ' + row['done'] if row and row['done'] else 'not done yet'}")
         return 0
 
-    if action == "rebalance":
-        broker = AlpacaPaperBroker(settings, creds)
-        c = _retrying(clock.market_clock)
-        store = MarketDataStore(PROJECT_ROOT / settings.storage.sqlite_path)
-        try:
-            level = int(RiskStateStore(store).level(today))
-        finally:
-            store.conn.close()
-        def settle() -> list[str]:
-            """Wait for the 9:30 ET open (auction orders), then check fills until nothing is working (max 5 min)."""
-            target = datetime.combine(today, time(9, 33), dmp.ET)
-            while dmp.now_utc() < target:
-                _t.sleep(min(60.0, max(1.0, (target - dmp.now_utc()).total_seconds())))
-            notes, give_up = [], dmp.now_utc() + timedelta(minutes=5)
-            while True:
-                notes += book.sync(broker)
-                if not book.working() or dmp.now_utc() > give_up:
-                    return notes
-                _t.sleep(10)
+    if action not in ("rebalance", "resize"):
+        print("momentum needs: plan | rebalance | resize | status")
+        return 2
 
-        res = book.rebalance(broker, now, decision, prices, bool(c["is_open"]), level, dmp.STOP_FILE.exists(),
-                             resize=resize)
-        print(res.summary(), flush=True)
-        if res.submitted:
-            res.notes += settle()
-            if any(r["status"] in ("rejected", "canceled") for r in book.conn.execute(
-                    "SELECT status FROM orders WHERE day=?", (today.isoformat(),))) and not book.working():
-                retry = book.rebalance(broker, dmp.now_utc(), decision, prices, True, level, dmp.STOP_FILE.exists())
-                print(retry.summary(), flush=True)
-                res.notes += settle()
-        done = book.finish(month_end, today)
-        held = book.holdings()
-        msg = (f"{month_end:%B} signal: hold {', '.join(decision.held) or 'cash'}. Now holding "
-               + (", ".join(f"{q} {s}" for s, q in sorted(held.items())) or "nothing") + "."
-               + (" " + "; ".join(res.notes) if res.notes else ""))
-        print(msg)
-        if done:
-            alerts.send("Dual momentum rebalanced", msg, "low")
-        elif res.submitted or book.working() or res.skipped:
-            alerts.urgent("Dual momentum needs a look", msg + " Not finished; the next scheduled run retries.")
-        return 0
+    store = MarketDataStore(PROJECT_ROOT / settings.storage.sqlite_path)
+    try:
+        level = int(RiskStateStore(store).level(today))
+    finally:
+        store.conn.close()
+    stop = dmp.STOP_FILE.exists()
 
-    print("momentum needs: plan | rebalance | resize | status")
-    return 2
+    def wait_until(t: time) -> None:
+        target = datetime.combine(today, t, dmp.ET)
+        while dmp.now_utc() < target:
+            _t.sleep(min(60.0, max(1.0, (target - dmp.now_utc()).total_seconds())))
+
+    def settle_shares() -> list[str]:
+        """Wait for the 9:30 ET open (auction orders), then check fills until no share order works (max 5 min)."""
+        wait_until(time(9, 33))
+        notes, give_up = [], dmp.now_utc() + timedelta(minutes=5)
+        while True:
+            notes += book.sync(broker)
+            if not any(not dmp.is_option(r["symbol"]) for r in book.working()) or dmp.now_utc() > give_up:
+                return notes
+            _t.sleep(10)
+
+    def quote(sym: str):
+        q = next(iter(_retrying(lambda: source.fetch_option_quotes([sym]))), None)
+        return (q.bid, q.ask) if q and q.bid and q.ask else None
+
+    book.sync(broker)
+    book.plan(broker, today, decision, prices, resize=resize)
+    book.roll_due(today, decision)
+    notes: list[str] = []
+    c = _retrying(clock.market_clock)
+    shares = book.trade_shares(broker, now, decision, bool(c["is_open"]), level, stop)
+    print(shares.summary(), flush=True)
+    if shares.submitted:
+        notes += settle_shares()
+        if any(r["status"] in ("rejected", "canceled") for r in book.conn.execute(
+                "SELECT status, symbol FROM orders WHERE day=?", (today.isoformat(),)) if not dmp.is_option(r["symbol"])):
+            retry = book.trade_shares(broker, dmp.now_utc(), decision, True, level, stop)
+            print(retry.summary(), flush=True)
+            notes += retry.notes + settle_shares()
+    notes += shares.notes
+    wait_until(dmp.OPTIONS_FROM)
+    opts = None
+    if _retrying(clock.market_clock)["is_open"]:
+        opts = book.trade_options(broker, dmp.now_utc(), decision,
+                                  lambda fund, budget: dmp.choose_call(source, fund, today, budget), quote, level, stop,
+                                  prices)
+        print(opts.summary(), flush=True)
+        notes += opts.notes + opts.skipped
+    else:
+        notes.append("market not open for options; the next run retries")
+    book.sync(broker)
+    value = book.value(_retrying(broker.positions))
+    done = book.finish(month_end, today, value)
+    held = book.holdings()
+    msg = (f"{month_end:%B} signal: hold {', '.join(decision.held) or 'cash'}. Now holding "
+           + (", ".join(f"{q} {s}" for s, q in sorted(held.items())) or "nothing") + f" (~${value:,.0f})."
+           + (" " + "; ".join(notes) if notes else ""))
+    print(msg)
+    if done:
+        alerts.send("Dual momentum rebalanced", msg, "low")
+    elif shares.submitted or (opts and (opts.submitted or opts.skipped)) or book.working() or level != 0 or stop:
+        alerts.urgent("Dual momentum needs a look", msg + " Not finished; the next scheduled run retries.")
+    return 0
 
 
 def cmd_gap_puts(settings, action: str) -> int:

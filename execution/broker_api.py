@@ -57,6 +57,8 @@ class BrokerPosition:
     qty: int                     # signed: + long, - short
     avg_entry_price: float
     asset_class: str             # us_option | us_equity
+    market_value: float | None = None       # $ now (qty x price x multiplier), when the broker reports it
+    lastday_price: float | None = None      # previous close, per share / per option contract unit
 
 
 class BrokerAPI(Protocol):
@@ -65,6 +67,7 @@ class BrokerAPI(Protocol):
     def submit_multileg(self, client_order_id: str, legs: list[OrderLeg], qty: int, limit_price: float) -> BrokerOrder: ...
     def submit_stock(self, client_order_id: str, symbol: str, side: str, qty: int, limit_price: float) -> BrokerOrder: ...
     def submit_auction(self, client_order_id: str, symbol: str, side: str, qty: int, auction: str) -> BrokerOrder: ...
+    def submit_option(self, client_order_id: str, symbol: str, side: str, qty: int, limit_price: float, intent: str) -> BrokerOrder: ...
     def get_order(self, broker_id: str) -> BrokerOrder: ...
     def find_order(self, client_order_id: str) -> BrokerOrder | None: ...
     def cancel_order(self, broker_id: str) -> None: ...
@@ -151,6 +154,11 @@ class SimulatedBroker:
         sign = 1 if side == "buy" else -1
         return self.submit_multileg(client_order_id, [OrderLeg(symbol, side, 1, "stock")], qty, sign * price)
 
+    def submit_option(self, client_order_id, symbol, side, qty, limit_price, intent):
+        """Single-option limit order (positive $/share); fills at the limit like the multi-leg sim."""
+        sign = 1 if side == "buy" else -1
+        return self.submit_multileg(client_order_id, [OrderLeg(symbol, side, 1, intent)], qty, sign * limit_price)
+
     def get_order(self, broker_id):
         o = self.orders[broker_id]
         legs, beh, polls = self._meta[broker_id]
@@ -177,8 +185,13 @@ class SimulatedBroker:
         return [o for o in self.orders.values() if not o.status.terminal]
 
     def positions(self):
-        return [BrokerPosition(s, q, self.leg_prices.get(s, 1.0), "us_option" if len(s) > 6 else "us_equity")
-                for s, q in self._positions.items()]
+        prev = getattr(self, "lastday_prices", {})
+        out = []
+        for s, q in self._positions.items():
+            px, mult = self.leg_prices.get(s, 1.0), 100 if len(s) > 6 else 1
+            out.append(BrokerPosition(s, q, px, "us_option" if len(s) > 6 else "us_equity", q * px * mult,
+                                      prev.get(s, px)))
+        return out
 
     def equity(self):
         return self._equity

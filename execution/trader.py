@@ -155,6 +155,18 @@ class TradingSession:
                 orders |= o
         return held, orders
 
+    def _momentum_pnl(self, today, broker_positions) -> tuple[float, float]:
+        """Dual momentum's all-time P&L now and at the previous close (0, 0 without it or if it can't be read,
+        which leaves the kill switch counting everything: the safe side)."""
+        if self.momentum is None:
+            return 0.0, 0.0
+        try:
+            self.momentum.sync(self.broker)
+            return self.momentum.pnl_now(broker_positions), self.momentum.pnl_at_prev_close(today, broker_positions)
+        except Exception as exc:
+            log.warning("dual momentum P&L unavailable; kill switch counts it today: %s", exc)
+            return 0.0, 0.0
+
     def _expected_extras(self, assignment_shares: int) -> tuple[dict[str, int] | None, set[str]]:
         """Shares and open orders that belong to us but not to the options book: assignment shares being
         unwound, and the share strategies' holdings and orders."""
@@ -227,9 +239,11 @@ class TradingSession:
         self._live_symbols = {l.symbol for p in positions if p.strategy == WEEKLY for l in p.legs}
 
         # 1-2. account, assignments and reconciliation
-        equity = self.broker.equity()
-        day = self.state.start_day(today, self.broker.last_equity())
         broker_positions = self.broker.positions()
+        mom_now, mom_prev = self._momentum_pnl(today, broker_positions)
+        # Dual momentum is kept out of the kill switch (owner, 2026-10-21): its P&L is taken out of both sides.
+        equity = self.broker.equity() - mom_now
+        day = self.state.start_day(today, self.broker.last_equity() - mom_prev)
         positions = self._handle_assignments(positions, broker_positions, rep.notes)
         shares = self._assignment_shares()
         hedge, extra_orders = self._expected_extras(shares)

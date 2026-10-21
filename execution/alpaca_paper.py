@@ -78,6 +78,14 @@ class AlpacaPaperBroker:
                                  time_in_force=tif, client_order_id=client_order_id)
         return self._submit(req, client_order_id, qty, 0.0)
 
+    def submit_option(self, client_order_id: str, symbol: str, side: str, qty: int, limit_price: float,
+                      intent: str) -> BrokerOrder:
+        """One option contract symbol, DAY limit order at a positive $/share price. Used by dual momentum."""
+        req = LimitOrderRequest(symbol=symbol, qty=qty, side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
+                                type=OrderType.LIMIT, time_in_force=TimeInForce.DAY, limit_price=round(limit_price, 2),
+                                position_intent=_INTENT[intent], client_order_id=client_order_id)
+        return self._submit(req, client_order_id, qty, limit_price)
+
     def _submit(self, req, client_order_id: str, qty: int, limit_price: float) -> BrokerOrder:
         try:
             return self._convert(self.__client.submit_order(req))
@@ -112,7 +120,9 @@ class AlpacaPaperBroker:
             qty = int(float(p.qty))
             if _v(p.side) == "short" and qty > 0:
                 qty = -qty
-            out.append(BrokerPosition(p.symbol, qty, float(p.avg_entry_price), _v(p.asset_class)))
+            out.append(BrokerPosition(p.symbol, qty, float(p.avg_entry_price), _v(p.asset_class),
+                                      None if p.market_value is None else float(p.market_value),
+                                      None if p.lastday_price is None else float(p.lastday_price)))
         return out
 
     def equity(self) -> float:
