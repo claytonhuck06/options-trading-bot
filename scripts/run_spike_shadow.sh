@@ -1,6 +1,7 @@
 #!/bin/zsh
-# Spike-short forward shadow log (research only, NO orders). launchd runs this at 8:35 CT (9:35 ET: screen the
-# morning's checklist candidates and record IBKR's shortable list) and 15:30 CT (16:30 ET: record the simulated
+# Spike-short forward shadow log. Places IBKR PAPER orders only when config/ibkr_paper.yaml is enabled (never live).
+# launchd runs this at 8:35 CT (9:35 ET: screen the morning's checklist candidates, record IBKR's shortable list,
+# short them on IBKR paper), 14:50 CT (15:50 ET: cover on IBKR paper) and 15:30 CT (16:30 ET: record the simulated
 # exit at the close) on weekdays. See research/spike_short_shadow.py.
 
 set -u
@@ -15,7 +16,8 @@ export OPTIONS_QUANT_ENV=paper
 PY="$PROJECT/.venv/bin/python"
 ACTION="${1:-}"
 if [[ -z "$ACTION" ]]; then
-  if (( $(date +%H) < 12 )); then ACTION=morning; else ACTION=close; fi
+  H=$(date +%H)
+  if (( H < 12 )); then ACTION=morning; elif (( H == 14 )); then ACTION=cover; else ACTION=close; fi
 fi
 echo "=== $(date) spike-short shadow $ACTION ===" >> "$LOG"
 /usr/bin/caffeinate -i "$PY" -W ignore main.py spike-short-shadow "$ACTION" >> "$LOG" 2>&1

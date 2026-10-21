@@ -1,0 +1,8 @@
+# IBKR PAPER orders for the spike-short shadow log (execution/ibkr_paper.py). Paper only: live ports 4001/7496 and
+# non-paper accounts (ids not starting "DU") are refused. The bot never handles a password: open IB Gateway (or TWS),
+# log in to the PAPER account, and enable the API (Configure > Settings > API: "Enable ActiveX and Socket Clients",
+# untick "Read-Only API").
+enabled: true
+host: 127.0.0.1
+port: 4002        # IB Gateway paper; TWS paper is 7497 (the bot tries both)
+client_id: 17

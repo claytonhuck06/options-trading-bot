@@ -32,7 +32,7 @@ Commands:
     python main.py spike-short-v2       Webull-checklist version: +75% dead-company gaps, intraday peak entry.
     python main.py spike-short-v3       Same stocks, short at the open and cover at the close.
     python main.py spike-short-v4       Enhanced: 50% squeeze stop, 1.5%-risk sizing, IBKR locate/borrow costs.
-    python main.py spike-short-shadow morning|close|status [--dry-run]   Forward shadow log of the day-trade-only
+    python main.py spike-short-shadow morning|cover|close|status|ibkr-check [--dry-run]   Forward shadow log of the day-trade-only
                                         checklist short: logs signals + IBKR borrow, simulated exit. No orders.
     python main.py spike-short [fetch]  Short-the-small-stock-spike backtest, shortable stocks only (free daily bars).
     python main.py momentum plan|rebalance|resize|status   Paper dual momentum (top 2 of 5 ETFs, monthly).
@@ -1141,6 +1141,45 @@ def cmd_spike_short_v4(settings) -> int:
     return 0
 
 
+def _ibkr_paper(conn, today, what: str, rows=None) -> str:
+    """IBKR PAPER orders for the shadow log (config/ibkr_paper.yaml). Never raises: returns a one-line outcome."""
+    from core.config import PROJECT_ROOT
+    from execution import ibkr_paper as ip
+
+    cfg = ip.load_config(PROJECT_ROOT / "config" / "ibkr_paper.yaml")
+    if not cfg.enabled:
+        return "IBKR paper: off (config/ibkr_paper.yaml)"
+    ib = None
+    try:
+        for port in dict.fromkeys([cfg.port, 4002, 7497]):           # configured port, then the other paper port
+            try:
+                ib = ip.connect(ip.Config(True, cfg.host, port, cfg.client_id))
+                break
+            except ip.PaperGuardError:
+                raise
+            except Exception as exc:                                 # nothing listening on this port
+                last = exc
+        if ib is None:
+            return f"IBKR paper: could not connect - is IB Gateway (or TWS) open and logged in to PAPER? ({last})"
+        ip.open_db(conn)
+        if what == "check":
+            acct = ib.managedAccounts()[0]
+            nl = next((v.value for v in ib.accountSummary(acct) if v.tag == "NetLiquidation"), "?")
+            return f"IBKR paper: connected to paper account {acct[:4]}... on port {port}, net liquidation {nl}"
+        if what == "place":
+            return ip.message(ip.place(ib, conn, today, rows or []))
+        done = ip.cover(ib, conn, today)
+        return "IBKR paper: " + ("; ".join(f"{d['symbol']} out at ${d['exit_fill']:.4g} ({d['exit_how']})"
+                                           for d in done) if done else "nothing to cover")
+    except ip.PaperGuardError as exc:
+        return f"IBKR paper: REFUSED - {exc}"
+    except Exception as exc:
+        return f"IBKR paper: error - {exc}"
+    finally:
+        if ib is not None:
+            ib.disconnect()
+
+
 def cmd_spike_short_shadow(settings, action: str, dry_run: bool) -> int:
     """Forward shadow log (v4 rules, day-trade only). Read-only data; places no orders. --dry-run: nothing saved."""
     from datetime import datetime
@@ -1169,6 +1208,9 @@ def cmd_spike_short_shadow(settings, action: str, dry_run: bool) -> int:
                                   "FROM shadow ORDER BY day DESC, rank LIMIT 20"):
                 print("  ", r)
             return 0
+        if action == "ibkr-check":
+            print(_ibkr_paper(conn, today, "check"))
+            return 0
         recent, history, news, ibkr, bar, minutes = sh.live_fns(load_alpaca_credentials(settings), conn, today)
         if action == "morning":
             if today.weekday() >= 5 or now.time() < sh.MORNING_FROM:
@@ -1179,9 +1221,17 @@ def cmd_spike_short_shadow(settings, action: str, dry_run: bool) -> int:
             print(f"{today} morning: {note}." + (" (dry run, nothing saved)" if dry_run else ""))
             if rows:
                 msg = sh.morning_message(rows)
+                if not dry_run:
+                    msg += "\n" + _ibkr_paper(conn, today, "place", rows)
                 print(msg)
                 if not dry_run:
                     alerts.send(f"Spike-short shadow {today}", msg, "default")
+            return 0
+        if action == "cover":
+            msg = _ibkr_paper(conn, today, "cover")
+            print(msg)
+            if "nothing" not in msg and not dry_run:
+                alerts.send(f"Spike-short IBKR paper {today}: covered", msg, "low")
             return 0
         if action == "close":
             if dry_run:                                   # nothing saved this morning: settle today's screen now
@@ -1203,7 +1253,7 @@ def cmd_spike_short_shadow(settings, action: str, dry_run: bool) -> int:
             return 0
     finally:
         conn.close()
-    print("spike-short-shadow needs: morning | close | status")
+    print("spike-short-shadow needs: morning | cover | close | status | ibkr-check")
     return 2
 
 
