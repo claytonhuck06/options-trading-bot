@@ -39,19 +39,19 @@ def rebalance(book, broker, d, now=PRE_OPEN, market_open=False, kill=0, stop=Fal
 
 def test_size_is_one_equal_risk_trade():
     d = decision(["SPY", "IEF"])
-    assert dmp.SLEEVE == pytest.approx(0.06)                          # 1.5% risk / 25% stress drop
-    assert dmp.target_shares(d, 100_000, PRICES) == {"SPY": 6, "IEF": 32}   # $3,000 each -> 6 x $500, 31.6 x $95
+    assert dmp.SLEEVE == pytest.approx(0.20)                          # owner, 2026-10-21
+    assert dmp.target_shares(d, 100_000, PRICES) == {"SPY": 20, "IEF": 105}   # $10,000 each -> 20 x $500, 105.3 x $95
     assert dmp.target_shares(decision([]), 100_000, PRICES) == {}
 
 
 def test_first_month_buys_in_opening_auction_then_finishes(book, broker):
     d = decision(["SPY", "IEF"])
     res = rebalance(book, broker, d)
-    assert sorted(res.submitted) == ["buy 32 IEF (opening auction)", "buy 6 SPY (opening auction)"]
+    assert sorted(res.submitted) == ["buy 105 IEF (opening auction)", "buy 20 SPY (opening auction)"]
     assert all(c.startswith("oqm-20261102-buy-") for c in broker.submitted)
     assert not book.finish(d.month_end, date(2026, 11, 2))           # still working
     book.sync(broker)
-    assert book.holdings() == {"SPY": 6, "IEF": 32}
+    assert book.holdings() == {"SPY": 20, "IEF": 105}
     assert book.finish(d.month_end, date(2026, 11, 2))
     assert "already done" in rebalance(book, broker, d).summary()
 
@@ -63,7 +63,7 @@ def test_next_month_rotates_sells_first(book, broker):
     broker.submitted.clear()
     res = rebalance(book, broker, decision(["SPY", "DBC"], date(2026, 11, 30)), now=AFTER_OPEN, market_open=True)
     assert broker.submitted[0].startswith("oqm-20261102-sell-IEF")
-    assert "sell 32 IEF (market)" in res.submitted and "buy 136 DBC (market)" in res.submitted
+    assert "sell 105 IEF (market)" in res.submitted and "buy 455 DBC (market)" in res.submitted
     assert not any("SPY" in s for s in res.submitted)                # unchanged: no trade
 
 
@@ -73,7 +73,7 @@ def test_all_cash_sells_everything(book, broker):
     book.finish(date(2026, 10, 30), date(2026, 11, 2))
     d = decision([], date(2026, 11, 30))
     res = rebalance(book, broker, d)
-    assert sorted(res.submitted) == ["sell 32 IEF (opening auction)", "sell 6 SPY (opening auction)"]
+    assert sorted(res.submitted) == ["sell 105 IEF (opening auction)", "sell 20 SPY (opening auction)"]
     book.sync(broker)
     assert book.holdings() == {} and book.finish(d.month_end, date(2026, 12, 1))
 
@@ -84,11 +84,11 @@ def test_kill_switch_blocks_buys_but_not_sells(book, broker):
     book.finish(date(2026, 10, 30), date(2026, 11, 2))
     d = decision(["SPY", "DBC"], date(2026, 11, 30))
     res = rebalance(book, broker, d, kill=2)
-    assert res.submitted == ["sell 32 IEF (opening auction)"] and "kill switch level 2" in res.summary()
+    assert res.submitted == ["sell 105 IEF (opening auction)"] and "kill switch level 2" in res.summary()
     book.sync(broker)
     assert not book.finish(d.month_end, date(2026, 12, 1))           # not done: DBC still to buy
     res = rebalance(book, broker, d)                                  # next weekday, kill switch clear
-    assert res.submitted == ["buy 136 DBC (opening auction)"]
+    assert res.submitted == ["buy 455 DBC (opening auction)"]
 
 
 def test_stop_file_blocks_buys(book, broker):
@@ -109,7 +109,7 @@ def test_rejected_auction_order_is_retried_with_the_months_targets(book, broker)
     book.sync(broker)
     broker.leg_prices["SPY"] = 400.0                                  # price moved: targets stay the month's own
     res = rebalance(book, broker, d, now=AFTER_OPEN, market_open=True)
-    assert res.submitted == ["buy 6 SPY (market)"]
+    assert res.submitted == ["buy 20 SPY (market)"]
     book.sync(broker)
     assert book.finish(d.month_end, date(2026, 11, 2))
 
@@ -149,9 +149,9 @@ def test_trader_expects_momentum_and_basket_shares(book, broker):
     basket = ob.OvernightBasket(ob.open_db(":memory:"))
     s = TradingSession(load_settings("development"), MarketDataStore(":memory:"), broker, basket=basket, momentum=book)
     hedge, orders = s._expected_extras(0)
-    assert hedge == {"SPY": 6, "IEF": 32} and orders == set()        # fills applied by the sync inside
+    assert hedge == {"SPY": 20, "IEF": 105} and orders == set()        # fills applied by the sync inside
     hedge, _ = s._expected_extras(100)                                # assignment shares add to momentum's SPY
-    assert hedge["SPY"] == 106
+    assert hedge["SPY"] == 120
 
 
 def test_assignment_check_counts_momentum_spy_as_known(book, broker, monkeypatch):
@@ -165,4 +165,18 @@ def test_assignment_check_counts_momentum_spy_as_known(book, broker, monkeypatch
     book.sync(broker)
     s = trader.TradingSession(load_settings("development"), MarketDataStore(":memory:"), broker, momentum=book)
     s._handle_assignments([], broker.positions(), [])
-    assert seen["known"] == 6               # so a real assignment on top of these shares still adds up
+    assert seen["known"] == 20              # so a real assignment on top of these shares still adds up
+
+
+def test_resize_tops_up_a_done_month_to_the_new_size(book, broker, monkeypatch):
+    d = decision(["SPY", "DBC"])
+    monkeypatch.setattr(dmp, "SLEEVE", 0.06)                         # the old size
+    rebalance(book, broker, d)
+    book.sync(broker)
+    assert book.holdings() == {"SPY": 6, "DBC": 136} and book.finish(d.month_end, date(2026, 11, 2))
+    monkeypatch.setattr(dmp, "SLEEVE", 0.20)
+    assert "already done" in rebalance(book, broker, d).summary()     # a normal run leaves a done month alone
+    res = book.rebalance(broker, AFTER_OPEN, d, PRICES, True, 0, False, resize=True)
+    assert sorted(res.submitted) == ["buy 14 SPY (market)", "buy 319 DBC (market)"]
+    book.sync(broker)
+    assert book.holdings() == {"SPY": 20, "DBC": 455} and book.finish(d.month_end, date(2026, 11, 2))

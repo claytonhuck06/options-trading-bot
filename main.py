@@ -29,7 +29,7 @@ Commands:
     python main.py overnight [refresh|fetch|liquid]  Overnight-drift stock screener + walk-forward test (free daily bars).
     python main.py overnight-basket pick|buy|sell|status   Paper overnight share basket (buy at close, sell at open).
     python main.py spike-short [fetch]  Short-the-small-stock-spike backtest, shortable stocks only (free daily bars).
-    python main.py momentum plan|rebalance|status          Paper dual momentum (top 2 of 5 ETFs, monthly).
+    python main.py momentum plan|rebalance|resize|status   Paper dual momentum (top 2 of 5 ETFs, monthly).
     python main.py after-close              Daily summary pushed to the phone, then storage cleanup (scheduled).
     python main.py storage status|cleanup|restore [--date D]   Live-data storage: sizes, cleanup now, restore a day.
     python main.py notify --title T --message M [--priority urgent]   Send a phone alert (used by the scripts).
@@ -927,7 +927,8 @@ def _momentum_lines() -> list[str]:
 
 
 def cmd_momentum(settings, action: str) -> int:
-    """Dual momentum on the PAPER account: plan | rebalance | status (execution/dual_momentum_paper.py)."""
+    """Dual momentum on the PAPER account: plan | rebalance | resize | status (execution/dual_momentum_paper.py).
+    resize = trade this month's holdings to the current size now (after changing dmp.SLEEVE)."""
     import json
     import time as _t
     from datetime import datetime, time, timedelta
@@ -959,21 +960,25 @@ def cmd_momentum(settings, action: str) -> int:
     first = today.replace(day=1)
     last_month = _retrying(lambda: clock.trading_days((first - timedelta(days=1)).replace(day=1), first - timedelta(days=1)))
     month_end = max(last_month)
-    if action == "rebalance":
+    resize = action == "resize"
+    if resize:
+        action = "rebalance"
+    elif action == "rebalance":
         row = book.month(month_end)
         if row is not None and row["done"]:
             print(f"{month_end:%B} signal already traded on {row['done']}; nothing to do")
             return 0
-        if today not in _retrying(lambda: clock.trading_days(today, today)):
-            print("market closed today; will try next weekday")
-            return 0
+    if action == "rebalance" and today not in _retrying(lambda: clock.trading_days(today, today)):
+        print("market closed today; will try next weekday")
+        return 0
     try:
         decision = dmp.decide(dmp.load_live(), month_end)
     except Exception as exc:
         print(f"no decision: {exc}")
         if action == "rebalance":
-            alerts.urgent("Dual momentum: no decision", f"Couldn't compute the {month_end} signal: {exc}. Will retry next weekday.")
-        return 1 if action == "rebalance" else 0
+            alerts.urgent("Dual momentum: no decision", f"Couldn't compute the {month_end} signal: {exc}. "
+                          "The next scheduled run retries.")
+        return 0                                  # already alerted; a non-zero exit would send a second alert
     prices = {}
     for s in decision.held:
         prices[s] = _retrying(lambda s=s: clock.latest_underlying_trade(s))["price"]
@@ -997,20 +1002,28 @@ def cmd_momentum(settings, action: str) -> int:
             level = int(RiskStateStore(store).level(today))
         finally:
             store.conn.close()
-        res = book.rebalance(broker, now, decision, prices, bool(c["is_open"]), level, dmp.STOP_FILE.exists())
-        print(res.summary(), flush=True)
-        if res.submitted:
+        def settle() -> list[str]:
+            """Wait for the 9:30 ET open (auction orders), then check fills until nothing is working (max 5 min)."""
             target = datetime.combine(today, time(9, 33), dmp.ET)
             while dmp.now_utc() < target:
                 _t.sleep(min(60.0, max(1.0, (target - dmp.now_utc()).total_seconds())))
-            notes = book.sync(broker)
+            notes, give_up = [], dmp.now_utc() + timedelta(minutes=5)
+            while True:
+                notes += book.sync(broker)
+                if not book.working() or dmp.now_utc() > give_up:
+                    return notes
+                _t.sleep(10)
+
+        res = book.rebalance(broker, now, decision, prices, bool(c["is_open"]), level, dmp.STOP_FILE.exists(),
+                             resize=resize)
+        print(res.summary(), flush=True)
+        if res.submitted:
+            res.notes += settle()
             if any(r["status"] in ("rejected", "canceled") for r in book.conn.execute(
                     "SELECT status FROM orders WHERE day=?", (today.isoformat(),))) and not book.working():
                 retry = book.rebalance(broker, dmp.now_utc(), decision, prices, True, level, dmp.STOP_FILE.exists())
                 print(retry.summary(), flush=True)
-                _t.sleep(20)
-                notes += book.sync(broker)
-            res.notes += notes
+                res.notes += settle()
         done = book.finish(month_end, today)
         held = book.holdings()
         msg = (f"{month_end:%B} signal: hold {', '.join(decision.held) or 'cash'}. Now holding "
@@ -1020,10 +1033,10 @@ def cmd_momentum(settings, action: str) -> int:
         if done:
             alerts.send("Dual momentum rebalanced", msg, "low")
         elif res.submitted or book.working() or res.skipped:
-            alerts.urgent("Dual momentum needs a look", msg + " Not finished; will retry next weekday.")
+            alerts.urgent("Dual momentum needs a look", msg + " Not finished; the next scheduled run retries.")
         return 0
 
-    print("momentum needs: plan | rebalance | status")
+    print("momentum needs: plan | rebalance | resize | status")
     return 2
 
 

@@ -147,7 +147,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.optionsquant.collect
 
 ### Dual momentum (paper)
 
-`com.optionsquant.momentum` runs `scripts/run_momentum.sh` at 8:10 a.m. Central on weekdays. On the first trading day of each month (or the next weekday, if that one was missed) it holds the top 2 of SPY/EFA/IEF/VNQ/DBC by 12-month return, each only while it's above its 10-month average, about 6% of equity in all. Other days it exits at once. `python main.py momentum plan` shows this month's signal; `momentum status` shows holdings. Logs: `logs/momentum_<month>.log`.
+`com.optionsquant.momentum` runs `scripts/run_momentum.sh` at 8:10, 10:00 and 1:00 Central on weekdays. On the first trading day of each month (or at the next run, if one was missed) it holds the top 2 of SPY/EFA/IEF/VNQ/DBC by 12-month return, each only while it's above its 10-month average, 20% of equity in all. Other days it exits at once. `python main.py momentum plan` shows this month's signal; `momentum status` shows holdings; `momentum resize` trades this month's holdings to a new size right away. Logs: `logs/momentum_<month>.log`.
 
 The `.plist` files in `scripts/` contain absolute paths for the original machine; edit them to match your project folder before installing.
 

@@ -4,8 +4,8 @@ paper-trade it despite the NO-GO in docs/research/dual_momentum_backtest_2026-10
 
   * Signal: exactly the backtested rule (research/dual_momentum.py), on fresh free Yahoo daily data, using the
     last month-end close. The month-end must be the exchange's real last trading day of that month.
-  * Size: one trade in the equal risk pool: 1.5% of equity at risk against a 25% drop (the backtest's worst was
-    20.9%), so ~6% of equity; 3% per fund held, whole shares.
+  * Size: 20% of equity when both funds are held, 10% per fund, whole shares (owner decision 2026-10-21, up
+    from one equal-risk trade of ~6%). At the backtest's worst drop (20.9%) that's ~4% of the account.
   * When: the first weekday run of each month that's a trading day. Opening-auction orders before 9:28 ET;
     after the open (the Mac slept), plain market orders. Each month is done once; a missed or partly failed
     month is retried on the next weekday run.
@@ -35,9 +35,7 @@ log = get_logger("dual_momentum_paper")
 DB_PATH = PROJECT_ROOT / "data" / "storage" / "dual_momentum.db"
 STOP_FILE = PROJECT_ROOT / "STOP"
 PREFIX = "oqm-"
-RISK_PCT = 0.015
-STRESS_DROP = 0.25
-SLEEVE = RISK_PCT / STRESS_DROP                       # 6% of equity when both funds are held
+SLEEVE = 0.20                                         # share of equity when both funds are held (owner, 2026-10-21)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS months (
@@ -82,7 +80,7 @@ def decide(datas: dict[str, MarketData], month_end: date) -> Decision:
 
 
 def target_shares(decision: Decision, equity: float, prices: dict[str, float]) -> dict[str, int]:
-    """Whole shares per fund held: weight (0.5) x SLEEVE (6%) x equity / price, rounded to the nearest share."""
+    """Whole shares per fund held: weight (0.5) x SLEEVE (20%) x equity / price, rounded to the nearest share."""
     return {s: round(decision.weights[s] * SLEEVE * equity / prices[s]) for s in decision.held}
 
 
@@ -93,13 +91,15 @@ class DualMomentumBook(OvernightBasket):
         return self.conn.execute("SELECT * FROM months WHERE signal_month_end=?", (month_end.isoformat(),)).fetchone()
 
     def rebalance(self, broker: BrokerAPI, now: datetime, decision: Decision, prices: dict[str, float],
-                  market_open: bool, kill_level: int, stop_file: bool) -> Result:
+                  market_open: bool, kill_level: int, stop_file: bool, resize: bool = False) -> Result:
+        """Trade holdings to this month's targets. Targets are fixed when the month is first traded (so retries
+        don't chase prices); resize=True recomputes them from today's equity and prices (after a size change)."""
         res = Result("rebalance")
         local = now.astimezone(ET)
         today = local.date()
         res.notes += self.sync(broker)
         row = self.month(decision.month_end)
-        if row is not None and row["done"]:
+        if row is not None and row["done"] and not resize:
             res.notes.append(f"{decision.month_end:%B} rebalance already done")
             return res
         if self.working():
@@ -120,6 +120,10 @@ class DualMomentumBook(OvernightBasket):
                               (decision.month_end.isoformat(), today.isoformat(), json.dumps(decision.held),
                                json.dumps({s: round(v, 4) for s, v in decision.scores.items()}),
                                json.dumps(decision.trend_on), json.dumps(target), equity, None, None))
+            self.conn.commit()
+        elif resize:
+            self.conn.execute("UPDATE months SET targets=?, equity=?, done=NULL, note=? WHERE signal_month_end=?",
+                              (json.dumps(target), equity, f"resized {today.isoformat()}", decision.month_end.isoformat()))
             self.conn.commit()
         else:                                        # a retry: keep the month's original targets
             target = json.loads(row["targets"])
