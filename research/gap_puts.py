@@ -243,6 +243,7 @@ def fetch_opt_bars(creds, conn: sqlite3.Connection, contract: str, kind: str, st
     hit = conn.execute("SELECT bars FROM opt_bars WHERE contract=? AND kind=? AND day=?", key).fetchone()
     if hit:
         return json.loads(hit[0])
+    end = min(end, datetime.now(timezone.utc) - timedelta(minutes=16))       # free data: no future, 15-min delay
     out, token = [], None
     while True:
         params = {"symbols": contract, "timeframe": "1Min" if kind == "min" else "1Day",
