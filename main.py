@@ -28,6 +28,7 @@ Commands:
         --grid strategy.KEY=V1,V2,...        Candidate settings the walk-forward chooses between.
     python main.py overnight [refresh|fetch|liquid]  Overnight-drift stock screener + walk-forward test (free daily bars).
     python main.py overnight-basket pick|buy|sell|status   Paper overnight share basket (buy at close, sell at open).
+    python main.py gap-puts [fetch|sample]  Puts on unexplained 30%+ overnight gaps (free bars, news, option trades).
     python main.py spike-short [fetch]  Short-the-small-stock-spike backtest, shortable stocks only (free daily bars).
     python main.py momentum plan|rebalance|resize|status   Paper dual momentum (top 2 of 5 ETFs, monthly).
     python main.py after-close              Daily summary pushed to the phone, then storage cleanup (scheduled).
@@ -1040,6 +1041,38 @@ def cmd_momentum(settings, action: str) -> int:
     return 2
 
 
+def cmd_gap_puts(settings, action: str) -> int:
+    """Gap-puts backtest: 'fetch' downloads daily bars, 'sample' writes the news-classifier check, else the report."""
+    from datetime import date
+
+    from core.config import PROJECT_ROOT
+    from core.secrets import load_alpaca_credentials
+    from research import gap_puts as gpm
+
+    creds = load_alpaca_credentials(settings)
+    out = PROJECT_ROOT / "docs" / "research"
+    conn = gpm.open_db(PROJECT_ROOT / "data" / "storage" / "studies" / "gap_puts.db")
+    try:
+        if action == "fetch" or conn.execute("SELECT value FROM meta WHERE key='end'").fetchone() is None:
+            gpm.download_bars(creds, conn, gpm.last_completed_day())
+            if action == "fetch":
+                return 0
+        if action == "sample":
+            df = gpm.add_features(gpm.load_bars(conn))
+            cands = gpm.collect(creds, conn, df, gpm.gaps(df), with_options=False)
+            path = out / "gap_puts_classifier_sample.md"
+            path.write_text("# Gap puts: news classifier check (40 random +30% gaps, seed 1)\n\n"
+                            + gpm.classifier_sample(cands, conn))
+            n_un = sum(not c.explained for c in cands)
+            print(f"{len(cands):,} gaps, {n_un:,} unexplained. Sample written: {path.relative_to(PROJECT_ROOT)}")
+            return 0
+        path, go = gpm.run(creds, conn, out, date.today())
+    finally:
+        conn.close()
+    print(f"{'GO' if go else 'NO-GO'}. Report written: {path.relative_to(PROJECT_ROOT)}")
+    return 0
+
+
 def cmd_spike_short(settings, action: str) -> int:
     """Short-the-spike backtest: 'fetch' downloads daily bars (free), anything else (re)builds the report."""
     from datetime import date
@@ -1179,7 +1212,7 @@ def cmd_overnight_basket(settings, action: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="options-quant")
-    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study", "opra-widen", "backtest", "after-close", "storage", "notify", "running", "midday", "vol-data", "overnight", "overnight-basket", "momentum", "spike-short"], nargs="?", default="config")
+    parser.add_argument("command", choices=["config", "check", "collect", "price", "report", "scan", "scan-report", "history", "risk-replay", "killswitch", "trade", "paper-demo", "opra-history", "databento-spend", "vol-study", "opra-widen", "backtest", "after-close", "storage", "notify", "running", "midday", "vol-data", "overnight", "overnight-basket", "momentum", "spike-short", "gap-puts"], nargs="?", default="config")
     parser.add_argument("--env", help="development | backtest | observation | paper | live")
     parser.add_argument("--once", action="store_true", help="collect: run a single cycle")
     parser.add_argument("--cycles", type=int, help="collect: stop after N cycles")
@@ -1241,6 +1274,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_vol_data(settings, args.action, args.path)
         if args.command == "overnight":
             return cmd_overnight(settings, args.action)
+        if args.command == "gap-puts":
+            return cmd_gap_puts(settings, args.action)
         if args.command == "spike-short":
             return cmd_spike_short(settings, args.action)
         if args.command == "overnight-basket":
