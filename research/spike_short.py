@@ -123,35 +123,56 @@ def _bars(client, symbols, start: date, end: date, adjustment):
                 yield s, d.isoformat(), b
 
 
+def _retry(fn, tries: int = 5, wait: float = 20.0):
+    import time
+    for k in range(tries):
+        try:
+            return fn()
+        except Exception as e:                       # network drops on a long free download
+            if k == tries - 1:
+                raise
+            print(f"  retrying after {type(e).__name__} ({k + 1}/{tries - 1})", flush=True)
+            time.sleep(wait)
+
+
 def download(creds, conn: sqlite3.Connection, end: date, batch: int = 100) -> None:
     """Assets; raw bars for everything (kept only for symbols that ever closed under $8); split-adjusted
-    bars for those symbols; SPY with dividends for the benchmark."""
+    bars for those symbols; SPY with dividends for the benchmark. Resumes after an interruption."""
     from alpaca.data.enums import Adjustment
     from alpaca.data.historical import StockHistoricalDataClient
     client = StockHistoricalDataClient(creds.key_id, creds.secret_key)
-    assets = fetch_assets(creds)
-    for t in ("assets", "raw", "adj", "spy"):
-        conn.execute(f"DELETE FROM {t}")
-    conn.executemany("INSERT INTO assets VALUES (:symbol,:name,:exchange,:status,:easy_to_borrow)", assets)
-    conn.commit()
-    syms = sorted(a["symbol"] for a in assets)
-    print(f"{len(syms):,} stocks (active + delisted); raw bars from {DATA_START}...", flush=True)
-    keep: list[str] = []
-    for i in range(0, len(syms), batch):
-        rows = [(s, d, b.close, b.volume) for s, d, b in _bars(client, syms[i:i + batch], DATA_START, end, Adjustment.RAW)]
-        cheap = {s for s, _, c, _ in rows if c is not None and c < MAX_PRICE}
-        conn.executemany("INSERT OR REPLACE INTO raw VALUES (?,?,?,?)", [r for r in rows if r[0] in cheap])
+    meta = dict(conn.execute("SELECT key, value FROM meta"))
+    if meta.get("raw_done") != end.isoformat():
+        assets = _retry(lambda: fetch_assets(creds))
+        for t in ("assets", "raw", "adj", "spy", "meta"):
+            conn.execute(f"DELETE FROM {t}")
+        conn.executemany("INSERT INTO assets VALUES (:symbol,:name,:exchange,:status,:easy_to_borrow)", assets)
         conn.commit()
-        keep += sorted(cheap)
-        print(f"  raw {min(i + batch, len(syms)):,}/{len(syms):,} ({len(keep):,} ever under ${MAX_PRICE:.0f})", flush=True)
-    for i in range(0, len(keep), batch):
-        rows = [(s, d, b.open, b.high, b.low, b.close, b.volume)
-                for s, d, b in _bars(client, keep[i:i + batch], DATA_START, end, Adjustment.SPLIT)]
+        syms = sorted(a["symbol"] for a in assets)
+        print(f"{len(syms):,} stocks (active + delisted); raw bars from {DATA_START}...", flush=True)
+        kept = 0
+        for i in range(0, len(syms), batch):
+            rows = _retry(lambda: [(s, d, b.close, b.volume) for s, d, b in
+                                   _bars(client, syms[i:i + batch], DATA_START, end, Adjustment.RAW)])
+            cheap = {s for s, _, c, _ in rows if c is not None and c < MAX_PRICE}
+            conn.executemany("INSERT OR REPLACE INTO raw VALUES (?,?,?,?)", [r for r in rows if r[0] in cheap])
+            conn.commit()
+            kept += len(cheap)
+            print(f"  raw {min(i + batch, len(syms)):,}/{len(syms):,} ({kept:,} ever under ${MAX_PRICE:.0f})", flush=True)
+        conn.execute("INSERT OR REPLACE INTO meta VALUES ('raw_done', ?)", (end.isoformat(),))
+        conn.commit()
+    keep = [r[0] for r in conn.execute("SELECT DISTINCT symbol FROM raw ORDER BY symbol")]
+    done = {r[0] for r in conn.execute("SELECT DISTINCT symbol FROM adj")}
+    todo = [s for s in keep if s not in done]
+    print(f"split-adjusted bars: {len(done):,} done, {len(todo):,} to go", flush=True)
+    for i in range(0, len(todo), batch):
+        rows = _retry(lambda: [(s, d, b.open, b.high, b.low, b.close, b.volume)
+                               for s, d, b in _bars(client, todo[i:i + batch], DATA_START, end, Adjustment.SPLIT)])
         conn.executemany("INSERT OR REPLACE INTO adj VALUES (?,?,?,?,?,?,?)", rows)
         conn.commit()
-        print(f"  split-adjusted {min(i + batch, len(keep)):,}/{len(keep):,}", flush=True)
+        print(f"  split-adjusted {min(i + batch, len(todo)):,}/{len(todo):,}", flush=True)
     conn.executemany("INSERT OR REPLACE INTO spy VALUES (?,?)",
-                     [(d, b.close) for _, d, b in _bars(client, ["SPY"], DATA_START, end, Adjustment.ALL)])
+                     _retry(lambda: [(d, b.close) for _, d, b in _bars(client, ["SPY"], DATA_START, end, Adjustment.ALL)]))
     conn.execute("INSERT OR REPLACE INTO meta VALUES ('end', ?)", (end.isoformat(),))
     conn.execute("INSERT OR REPLACE INTO meta VALUES ('fetched_at', ?)", (datetime.now(timezone.utc).isoformat(),))
     conn.commit()
