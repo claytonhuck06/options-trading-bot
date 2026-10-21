@@ -156,7 +156,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.optionsquant.collect
 
 The `.plist` files in `scripts/` contain absolute paths for the original machine; edit them to match your project folder before installing.
 
-**Moving to another Mac:** turn the seven jobs off on the old Mac, copy the whole project folder (databases included), then run `zsh scripts/setup_new_mac.sh` on the new one. It rebuilds `.venv`, asks for any missing keys, checks the Alpaca paper connection and the tests, and installs the jobs with the new folder's paths.
+**Moving to another Mac:** turn the eight jobs off on the old Mac, copy the whole project folder (databases included), then run `zsh scripts/setup_new_mac.sh` on the new one. It rebuilds `.venv`, asks for any missing keys, checks the Alpaca paper connection and the tests, and installs the jobs with the new folder's paths.
 
 ### Daily paper trading
 

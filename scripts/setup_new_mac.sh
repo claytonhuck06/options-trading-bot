@@ -2,8 +2,9 @@
 # One-step setup after copying this whole project folder to a new Mac. Run it in Terminal:
 #   zsh ~/"Options Trading bot"/scripts/setup_new_mac.sh
 # It rebuilds the Python environment, asks for any missing keys (typed in hidden, saved to ~/.zshrc like
-# set_databento_key.sh), checks the Alpaca paper connection and the tests, then turns on the four weekday
-# jobs (collector 8:15, trader 8:20, midday 12:00, after-close 3:20, Central time). Safe to run again.
+# set_databento_key.sh), checks the Alpaca paper connection and the tests, then turns on the weekday jobs in
+# JOBS (collector 8:15, trader 8:20, midday 12:00, after-close 3:20, overnight basket, momentum, spike-short
+# shadow log 8:35 and 3:30, Central time). Safe to run again.
 # Nothing here places orders.
 
 set -u
@@ -11,7 +12,7 @@ PROJECT="${0:A:h:h}"
 cd "$PROJECT" || exit 1
 OLD_PROJECT="/Users/claytonhuck/Options Trading bot"   # path baked into the .plist files in scripts/
 PAPER_URL="https://paper-api.alpaca.markets"
-JOBS=(collector trader midday afterclose overnight-buy overnight-sell momentum)
+JOBS=(collector trader midday afterclose overnight-buy overnight-sell momentum spike-shadow)
 
 step() { print "\n== $1"; }
 fail() { print "\nSTOPPED: $1"; print "Nothing was turned on. Fix the above (or ask Claude), then run this script again."; exit 1; }
