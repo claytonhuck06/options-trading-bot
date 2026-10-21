@@ -124,3 +124,20 @@ shadow test should track. (Same-day with a 30% stop: +2.96% a trade, Sharpe 0.44
 
 **The trade-off in one line:** capping the squeezes works (worst drop 36% → 6–8%), but at 2.7% of the account per
 short the strategy earns ~4%/yr — safe, but small next to SPY's 15%.
+
+**Day-trade-only version, year by year (information only, post-hoc; this is what the shadow log tracks)**
+
+| Year | Trades | Winners | Day-trade-only | v4 primary | SPY |
+|---|---|---|---|---|---|
+| 2017 | 4 | 4 | +3.1% | +3.1% | +20.9% |
+| 2018 | 2 | 2 | +1.7% | +1.7% | -5.0% |
+| 2019 | 8 | 5 | -0.6% | -0.6% | +31.1% |
+| 2020 | 26 | 22 | +9.8% | +9.8% | +18.5% |
+| 2021 | 1 | 1 | +0.9% | +0.9% | +28.6% |
+| 2022 | 8 | 6 | +0.5% | +1.4% | -18.2% |
+| 2023 | 26 | 20 | +5.7% | +1.0% | +26.2% |
+| 2024 | 50 | 36 | +7.5% | +10.0% | +24.9% |
+| 2025 | 32 | 25 | +11.0% | +12.6% | +17.7% |
+| 2026 (to Oct 20) | 46 | 27 | +1.8% | +0.7% | +13.7% |
+
+Whole period: +49.0% total, +4.2%/yr, worst drop 6.0%, Sharpe 1.02, 73% winners.
