@@ -6,4 +6,4 @@ enabled: true
 host: 127.0.0.1
 port: 4002        # IB Gateway paper; TWS paper is 7497 (the bot tries both)
 client_id: 17
-sizes: ["27", "40"]   # 2.7% account and 40% account (owner 2026-10-21); both in the one IBKR paper account
+sizes: ["40"]   # 40% account only (owner 2026-10-21); the 2.7% account stays simulated in the shadow log
