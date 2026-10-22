@@ -1222,7 +1222,10 @@ def cmd_spike_short_shadow(settings, action: str, dry_run: bool) -> int:
             if rows:
                 msg = sh.morning_message(rows)
                 if not dry_run:
-                    msg += "\n" + _ibkr_paper(conn, today, "place", rows)
+                    placed = _ibkr_paper(conn, today, "place", rows)
+                    msg += "\n" + placed
+                    if "shorted" in placed:                       # owner: a phone alert whenever a trade is placed
+                        alerts.send(f"IBKR paper trade placed {today}", placed, "high")
                 print(msg)
                 if not dry_run:
                     alerts.send(f"Spike-short shadow {today}", msg, "default")
@@ -1231,7 +1234,7 @@ def cmd_spike_short_shadow(settings, action: str, dry_run: bool) -> int:
             msg = _ibkr_paper(conn, today, "cover")
             print(msg)
             if "nothing" not in msg and not dry_run:
-                alerts.send(f"Spike-short IBKR paper {today}: covered", msg, "low")
+                alerts.send(f"IBKR paper trade closed {today}", msg, "high")
             return 0
         if action == "close":
             if dry_run:                                   # nothing saved this morning: settle today's screen now
