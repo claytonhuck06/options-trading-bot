@@ -124,3 +124,15 @@ def test_old_empty_table_is_migrated():
     conn.execute("CREATE TABLE ibkr_orders (day TEXT, symbol TEXT, PRIMARY KEY (day, symbol))")
     ip.open_db(conn)
     assert "size" in [r[1] for r in conn.execute("PRAGMA table_info(ibkr_orders)")]
+
+
+def test_day_lines_and_total_pnl():
+    conn = db()
+    day = date(2026, 10, 22)
+    conn.execute("INSERT INTO ibkr_orders (day, symbol, size, qty, status, filled, entry_fill, exit_fill, exit_how) "
+                 "VALUES ('2026-10-22','AAA','40',1000,'filled',1000,2.0,1.5,'cover')")
+    conn.execute("INSERT INTO ibkr_orders (day, symbol, size, qty, status, filled) "
+                 "VALUES ('2026-10-22','BBB','40',500,'cancelled',0)")
+    lines = ip.day_lines(conn, day)
+    assert lines == ["AAA 40%: short 1,000 at $2, out at $1.5 (cover), $+500", "BBB 40%: not shorted (cancelled)"]
+    assert ip.total_pnl(conn) == (1, 500.0)

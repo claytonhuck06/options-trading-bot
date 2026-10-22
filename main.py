@@ -1166,6 +1166,12 @@ def _ibkr_paper(conn, today, what: str, rows=None) -> str:
             acct = ib.managedAccounts()[0]
             nl = next((v.value for v in ib.accountSummary(acct) if v.tag == "NetLiquidation"), "?")
             return f"IBKR paper: connected to paper account {acct[:4]}... on port {port}, net liquidation {nl}"
+        if what == "status":
+            acct = ib.managedAccounts()[0]
+            nl = next((float(v.value) for v in ib.accountSummary(acct) if v.tag == "NetLiquidation"), None)
+            n, pnl = ip.total_pnl(conn)
+            return (f"IBKR paper account: ${nl:,.0f}. " if nl is not None else "IBKR paper account: value unknown. ") + \
+                   f"Bot's closed paper trades so far: {n}, ${pnl:+,.0f} before commissions."
         if what == "place":
             return ip.message(ip.place(ib, conn, today, rows or [], cfg.sizes))
         done = ip.cover(ib, conn, today)
@@ -1246,13 +1252,16 @@ def cmd_spike_short_shadow(settings, action: str, dry_run: bool) -> int:
                     now = now.replace(hour=sh.CLOSE_FROM.hour, minute=sh.CLOSE_FROM.minute)
             done = sh.close(conn, today, now, bar, minutes)
             t = sh.totals(conn)
-            if not done:
+            if done:
+                print(sh.close_message(done, t) + (" (dry run, nothing saved)" if dry_run else ""))
+            else:
                 print(f"{today} close: nothing to settle.")
-                return 0
-            msg = sh.close_message(done, t)
-            print(msg + (" (dry run, nothing saved)" if dry_run else ""))
-            if not dry_run:
-                alerts.send(f"Spike-short shadow {today}: closed", msg, "low")
+            if today.weekday() < 5 and not dry_run:      # owner: a summary after every trading day
+                from execution import ibkr_paper as ip
+                ip.open_db(conn)
+                status = _ibkr_paper(conn, today, "status")
+                alerts.send(f"Daily summary {today}",
+                            sh.day_summary(conn, today, done, t, ip.day_lines(conn, today), status), "default")
             return 0
     finally:
         conn.close()

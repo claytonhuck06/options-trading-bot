@@ -223,6 +223,29 @@ def cover(ib, conn: sqlite3.Connection, day: date, make_contract=_stock, make_or
 LABEL = {"27": "2.7%", "40": "40%"}
 
 
+def day_lines(conn: sqlite3.Connection, day: date) -> list[str]:
+    """One line per IBKR paper order placed on `day`, with P&L once it has an exit (before IBKR commissions)."""
+    out = []
+    for sym, size, filled, entry, exit_, how, status in conn.execute(
+            "SELECT symbol, size, filled, entry_fill, exit_fill, exit_how, status FROM ibkr_orders WHERE day=? "
+            "ORDER BY symbol, size", (day.isoformat(),)):
+        if not filled:
+            out.append(f"{sym} {LABEL[size]}: not shorted ({status})")
+        elif exit_ is None:
+            out.append(f"{sym} {LABEL[size]}: short {filled:,} at ${entry:.4g}, still open")
+        else:
+            out.append(f"{sym} {LABEL[size]}: short {filled:,} at ${entry:.4g}, out at ${exit_:.4g} ({how}), "
+                       f"${(entry - exit_) * filled:+,.0f}")
+    return out
+
+
+def total_pnl(conn: sqlite3.Connection) -> tuple[int, float]:
+    """(closed trades, summed P&L before commissions) over every IBKR paper order so far."""
+    n, pnl = conn.execute("SELECT COUNT(*), COALESCE(SUM((entry_fill - exit_fill) * filled), 0) FROM ibkr_orders "
+                          "WHERE filled > 0 AND exit_fill IS NOT NULL").fetchone()
+    return int(n), float(pnl)
+
+
 def message(placed: list[dict]) -> str:
     lines = []
     for r in placed:

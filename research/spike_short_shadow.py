@@ -304,7 +304,7 @@ def morning_message(rows: list[dict]) -> str:
                 f"2.7% needs {r['shares_needed']:,} {ok}; 40% needs {r['shares_needed_40']:,} {ok40}")
     taken = [r for r in rows if r["status"] == "signal"]
     other = [r for r in rows if r["status"] != "signal"]
-    msg = [f"{len(taken)} shadow short(s), no orders placed."] + [line(r) for r in taken]
+    msg = [f"{len(taken)} checklist short(s) today."] + [line(r) for r in taken]
     if other:
         msg.append("Skipped: " + ", ".join(f"{r['symbol']} ({r['status'].replace('_', ' ')})" for r in other))
     return "\n".join(msg)
@@ -328,6 +328,25 @@ def close_message(done: list[dict], t: dict) -> str:
             line += " (over the 3-a-day cap; not in the accounts)"
         msg.append(line)
     msg.append(summary_line(t))
+    return "\n".join(msg)
+
+
+def day_summary(conn: sqlite3.Connection, today: date, done: list[dict], t: dict, ibkr_lines: list[str],
+                ibkr_status: str) -> str:
+    """The owner's end-of-day summary (sent every weekday after the close)."""
+    ran = conn.execute("SELECT 1 FROM runs WHERE day=? AND kind='morning'", (today.isoformat(),)).fetchone()
+    sig = [r[0] for r in conn.execute("SELECT symbol FROM shadow WHERE day=? AND status='signal' ORDER BY rank",
+                                      (today.isoformat(),))]
+    if ran is None:
+        head = "Morning screen didn't run (market holiday, or the Mac/bot was off)."
+    else:
+        head = f"Signals today: {', '.join(sig) if sig else 'none'}."
+    msg = [head, "IBKR paper: " + ("; ".join(ibkr_lines) if ibkr_lines else "no trades today"), ibkr_status]
+    msg += [f"Shadow {d['symbol']} {d['day']}: {d['net']:+.1%} after costs (2.7% ${d['pnl']:+,.0f}, "
+            f"40% ${d['pnl_40']:+,.0f})" for d in done]
+    msg.append(f"Shadow accounts: 2.7% ${t['equity_27']:,.0f} ({t['equity_27'] / EQUITY - 1:+.1%}), "
+               f"40% ${t['equity_40']:,.0f} ({t['equity_40'] / EQUITY - 1:+.1%}); {t['settled']} trades over "
+               f"{t['days']} days.")
     return "\n".join(msg)
 
 

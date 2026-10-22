@@ -210,3 +210,13 @@ def test_old_file_gets_new_columns(tmp_path):
     old.close()
     cols = {r[1] for r in sh.open_db(p).execute("PRAGMA table_info(shadow)")}
     assert set(sh.EXTRA_COLUMNS) <= cols
+
+
+def test_day_summary_mentions_signals_ibkr_and_accounts():
+    from datetime import date as _d
+    from research import spike_short_shadow as _sh
+    conn = _sh.open_db(":memory:")
+    t = _sh.totals(conn)
+    msg = _sh.day_summary(conn, _d(2026, 10, 22), [], t, [], "IBKR paper account: $1,000,000.")
+    assert msg.startswith("Morning screen didn't run")
+    assert "IBKR paper: no trades today" in msg and "40% $100,000" in msg
