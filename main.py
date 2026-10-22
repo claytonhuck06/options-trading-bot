@@ -1167,9 +1167,9 @@ def _ibkr_paper(conn, today, what: str, rows=None) -> str:
             nl = next((v.value for v in ib.accountSummary(acct) if v.tag == "NetLiquidation"), "?")
             return f"IBKR paper: connected to paper account {acct[:4]}... on port {port}, net liquidation {nl}"
         if what == "place":
-            return ip.message(ip.place(ib, conn, today, rows or []))
+            return ip.message(ip.place(ib, conn, today, rows or [], cfg.sizes))
         done = ip.cover(ib, conn, today)
-        return "IBKR paper: " + ("; ".join(f"{d['symbol']} out at ${d['exit_fill']:.4g} ({d['exit_how']})"
+        return "IBKR paper: " + ("; ".join(f"{d['symbol']} {ip.LABEL[d['size']]} out at ${d['exit_fill']:.4g} ({d['exit_how']})"
                                            for d in done) if done else "nothing to cover")
     except ip.PaperGuardError as exc:
         return f"IBKR paper: REFUSED - {exc}"

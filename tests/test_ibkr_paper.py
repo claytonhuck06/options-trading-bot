@@ -43,8 +43,8 @@ class FakeIB:
         return FakeTrade(order, 0, 0, "Submitted")
 
 
-def order(kind, action, qty, price=None):
-    return NS(kind=kind, action=action, qty=qty, price=price, orderRef=ip.REF, orderId=None)
+def order(kind, action, qty, price=None, order_ref=ip.REF):
+    return NS(kind=kind, action=action, qty=qty, price=price, orderRef=order_ref, orderId=None)
 
 
 def contract(ib, sym):
@@ -77,27 +77,50 @@ def test_place_shorts_then_stops_and_records_rejections():
     rows = [{"symbol": "AAA", "status": "signal", "shares_needed": 900},
             {"symbol": "BBB", "status": "signal", "shares_needed": 500},
             {"symbol": "CCC", "status": "over_cap", "shares_needed": 100}]
-    out = ip.place(ib, conn, date(2026, 10, 22), rows, contract, order)
+    out = ip.place(ib, conn, date(2026, 10, 22), rows, ("27",), contract, order)
     assert [r["symbol"] for r in out] == ["AAA", "BBB"]
-    kinds = [(c, o.kind, o.action, o.qty, o.price) for c, o in ib.placed]
-    assert kinds == [("AAA", "MKT", "SELL", 900, None), ("AAA", "STP", "BUY", 900, 3.0), ("BBB", "MKT", "SELL", 500, None)]
+    kinds = [(c, o.kind, o.action, o.qty, o.price, o.orderRef) for c, o in ib.placed]
+    assert kinds == [("AAA", "MKT", "SELL", 900, None, "spike-shadow-27"), ("AAA", "STP", "BUY", 900, 3.0, "spike-shadow-27"),
+                     ("BBB", "MKT", "SELL", 500, None, "spike-shadow-27")]
     b = conn.execute("SELECT status, message, filled FROM ibkr_orders WHERE symbol='BBB'").fetchone()
     assert b == ("cancelled", "No shares available to borrow", 0)
-    assert ip.place(ib, conn, date(2026, 10, 22), rows, contract, order) == []      # never twice
+    assert ip.place(ib, conn, date(2026, 10, 22), rows, ("27",), contract, order) == []      # never twice
 
 
-def test_cover_cancels_stops_buys_back_and_records_exits():
+def test_place_both_sizes_separately():
+    ib, conn = FakeIB(), db()
+    rows = [{"symbol": "AAA", "status": "signal", "shares_needed": 900, "shares_needed_40": 13_000}]
+    out = ip.place(ib, conn, date(2026, 10, 22), rows, ip.SIZES, contract, order)
+    assert [(r["size"], r["qty"]) for r in out] == [("27", 900), ("40", 13_000)]
+    sells = [(o.qty, o.orderRef) for _, o in ib.placed if o.action == "SELL"]
+    assert sells == [(900, "spike-shadow-27"), (13_000, "spike-shadow-40")]
+    assert conn.execute("SELECT COUNT(*) FROM ibkr_orders").fetchone()[0] == 2
+
+
+def test_cover_per_size_cancels_stops_buys_back_and_records_exits():
     conn = db()
     day = date(2026, 10, 22)
-    ip.place(FakeIB(), conn, day, [{"symbol": "AAA", "status": "signal", "shares_needed": 900},
-                                   {"symbol": "SSS", "status": "signal", "shares_needed": 100}], contract, order)
-    stop = NS(order=NS(orderRef=ip.REF, action="BUY"), contract=NS(symbol="AAA"))
-    ex = [NS(contract=NS(symbol="AAA"), execution=NS(side="BOT", orderRef=ip.REF, shares=900, price=1.5)),
-          NS(contract=NS(symbol="SSS"), execution=NS(side="BOT", orderRef=ip.REF, shares=100, price=3.0))]
-    ib = FakeIB(positions=[NS(contract=NS(symbol="AAA"), position=-900)], executions=ex)   # SSS was stopped
+    ip.place(FakeIB(), conn, day, [{"symbol": "AAA", "status": "signal", "shares_needed": 900, "shares_needed_40": 13_000},
+                                   {"symbol": "SSS", "status": "signal", "shares_needed": 100}], ip.SIZES, contract, order)
+    stop = NS(order=NS(orderRef="spike-shadow-27", action="BUY"), contract=NS(symbol="AAA"))
+    stopped = [NS(contract=NS(symbol="SSS"), execution=NS(side="BOT", orderRef="spike-shadow-27", shares=100, price=3.0))]
+    covers = [NS(contract=NS(symbol="AAA"), execution=NS(side="BOT", orderRef="spike-shadow-27", shares=900, price=1.5)),
+              NS(contract=NS(symbol="AAA"), execution=NS(side="BOT", orderRef="spike-shadow-40", shares=13_000, price=1.6))]
+    ib = FakeIB(positions=[NS(contract=NS(symbol="AAA"), position=-13_900)])
+    calls = iter([stopped, stopped + covers])                  # before and after the cover orders
+    ib.reqExecutions = lambda: next(calls)
     ib._open = [stop]
     out = ip.cover(ib, conn, day, contract, order)
     assert ib.cancelled == [stop.order]
-    assert [(c, o.action, o.qty) for c, o in ib.placed] == [("AAA", "BUY", 900)]
-    got = dict(conn.execute("SELECT symbol, exit_how FROM ibkr_orders").fetchall())
-    assert got == {"AAA": "cover", "SSS": "stop"} and len(out) == 2
+    assert sorted((c, o.qty, o.orderRef) for c, o in ib.placed) == [("AAA", 900, "spike-shadow-27"),
+                                                                    ("AAA", 13_000, "spike-shadow-40")]
+    got = {(s, z): (h, px) for s, z, h, px in conn.execute("SELECT symbol, size, exit_how, exit_fill FROM ibkr_orders")}
+    assert got == {("AAA", "27"): ("cover", 1.5), ("AAA", "40"): ("cover", 1.6), ("SSS", "27"): ("stop", 3.0)}
+    assert len(out) == 3
+
+
+def test_old_empty_table_is_migrated():
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE ibkr_orders (day TEXT, symbol TEXT, PRIMARY KEY (day, symbol))")
+    ip.open_db(conn)
+    assert "size" in [r[1] for r in conn.execute("PRAGMA table_info(ibkr_orders)")]
